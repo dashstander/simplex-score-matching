@@ -1,0 +1,22 @@
+name: ssm
+channels:
+  - huggingface
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.9
+  - pip>=22
+  - matplotlib
+  - seaborn
+  - transformers
+  - datasets
+  - jupyterlab
+  - ipykernel
+  - ipywidgets
+  - pip:
+    - chex
+    - equinox
+    - jax
+    - pytest
+    - tqdm
+    - wandb
