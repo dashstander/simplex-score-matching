@@ -2,51 +2,37 @@ import chex
 import jax
 import jax.numpy as jnp
 
+from ssm.aitchison import clr, clr_inv, ilr_inv
 
-dim = 4
-n = 10_0000
+"""
+# Old version where the SDE is done _on_ the simplex, instead of just outside it
+def make_sde(alpha: float, gamma: float, dt: float):
+    
+    def _sde(xt, noise):
+        g_inv = riemann_inv_metric(xt)
+        rescaled_noise = clr_inv(jnp.matmul(g_inv, noise))
+        x_ou = apow(
+            perturb(gamma, apow(xt, -1.)),
+            alpha * dt
+        )
+        new_loc = perturb(xt, perturb(x_ou, rescaled_noise))
+        return new_loc, new_loc
+    
+    return _sde
+"""
 
-def cube_to_simplex_project(x: TensorType['batch', -1]):
-    assert torch.all(x >= 0) and torch.all(x <= 1)
-    dist_to_simplex = (1 - x.sum(dim=1)).tolist()
-    # black magic
-    # more seriously, example, goes from tensor with shape (batch, dim) such as
-    # the 3x2 tensor [[.19, .61], [.61, .65], [.8, .05]] to  (batch, dim, dim) 3x2x2
-    # [[[0.1900, 0.6100],
-    #   [0.1900, 0.6100]],
-    #  [[0.6100, 0.6500],
-    #   [0.6100, 0.6500]],
-    #  [[0.8000, 0.0500],
-    #   [0.8000, 0.0500]]]
-    many_xs = torch.tile(x[:, None], (1, x.shape[1], 1))
-    dist_diags = torch.cat([torch.eye(x.shape[-1])[None] * d for d in dist_to_simplex])
-    return torch.mean(dist_diags + many_xs, dim=1)
-
-
-def walk(starting_point, n: int):
-    """
-    """
-    dim = starting_point.shape[0]
-    sigma  = dim
-    increments = torch.normal(
-        mean=torch.zeros((dim * n,)),
-        std=torch.ones((dim * n,)) * (sigma / math.sqrt(dim))
-    ).reshape((n, dim))
-    x = starting_point + torch.cumsum(increments, dim=1) # Positions
-    y = x % 2
-    y = torch.where(x > 2, y, y  - 2)
-    y, _ = torch.sort(y, dim=0)
-    return torch.diff(y, dim=0)
+def make_sde(alpha: chex.Scalar, gamma: chex.Array, dt: chex.Scalar):
+    gamma_rn = clr(gamma)
+    def _sde(xt, noise):
+        x_ou = alpha * dt * (gamma_rn - clr(xt))
+        new_loc = clr_inv(clr(xt) + x_ou + ilr_inv(noise))
+        return new_loc, new_loc
+    return _sde
 
 
-def simplex_projection(x):
-    v = x[0]
-    rho = v - 1
-    v = []
-    for i in range(1, v.shape[0]):
-        vi = x[i]
-        if vi > rho:
-            rho += (vi - rho)/(v.abs() + 1)
-            if rho > (vi - 1):
-                
-
+def get_random_walk(key, num_steps, start, alpha, dt):
+    euc_dim = start.size - 1
+    rand_increments = jax.random.normal(key, (num_steps, euc_dim))*jnp.sqrt(dt)
+    sde = make_sde(alpha, start, dt)
+    _, path = jax.lax.scan(sde, start, rand_increments)
+    return path

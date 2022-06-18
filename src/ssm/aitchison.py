@@ -1,5 +1,5 @@
 import chex
-import itertools
+from functools import cache
 import jax
 import jax.numpy as jnp
 
@@ -11,43 +11,11 @@ def perturb(a: chex.Array, b: chex.Array) -> chex.Array:
     return x / jnp.sum(x)
 
 
-def pow(a, alpha) -> chex.Array:
+def apow(a, alpha) -> chex.Array:
     """ Scalar multiplication on the simplex with the Aitchison geometry
     """
     x =  a ** alpha
     return x / jnp.sum(x)
-
-
-@jax.jit
-def _index_pairs(dim: int)-> chex.Array:
-    return jnp.array(list(itertools.combinations(range(dim), 2)))
-
-
-def circulant(x: chex.Array) -> chex.Array:
-    """ Takes a vector (i.e. shape "(k,)") and returns the circulant k x k matrix
-    # TODO: Can I use this to cleverly calculate the Aitchison inner product?
-    """
-    chex.assert_rank()
-    size = x.size
-    circ = jnp.concatenate(
-        [jnp.roll(x, i)[None] for i in range(size)]
-    )
-    return circ.T
-
-
-@jax.jit
-def aitch_dot(a: chex.Array, b: chex.Array) -> chex.Scalar:
-    """ Inner product between two elements of the simplex with the Aitchison geometry
-    """
-    d = a.size[-1]
-    indices =  jnp.array(_index_pairs(d))
-    def pairwise(val, pair):
-        i, j = pair[0], pair[1]
-        sum1 = jnp.log(a[i])/jnp.log(a[j]) * jnp.log(b[i])/jnp.log(b[j])
-        sum2 = jnp.log(a[j])/jnp.log(a[i]) * jnp.log(b[j])/jnp.log(b[i])
-        return val + sum1 + sum2
-    return jax.lax.scan(pairwise, 0., indices)
-
 
 
 def aitch_basis(dim: int):
@@ -57,6 +25,10 @@ def aitch_basis(dim: int):
     return basis.at[i].set(jnp.e) / total
 
 
+def clr_inv(x: chex.Array) -> chex.Array:
+    """ The in
+    """
+    return jax.nn.softmax(x)
 
 
 def clr(x: chex.Array) -> chex.Array:
@@ -66,14 +38,65 @@ def clr(x: chex.Array) -> chex.Array:
     geom_mean = jnp.exp(jnp.mean(log_x))
     return jnp.log(x / geom_mean)
 
-def clr_inv(x: chex.Array) -> chex.Array:
-    """ The in
+
+@jax.jit
+def aitch_dot(a: chex.Array, b: chex.Array) -> chex.Scalar:
+    """ Inner product between two elements of the simplex with the Aitchison geometry
     """
-    return jax.nn.softmax(x)
+    return jnp.dot(clr(a), clr(b))
 
 
-def ilr(x: chex.Array) -> chex.Array:
+@cache
+def _vector(dim: int, i: int):
+    x = jnp.zeros((dim,))
+    x = x.at[0:i].set(1/i).at[i].set(-1)
+    x *= jnp.sqrt(i / (i + 1))
+    return x
+
+
+@cache
+def ortho_basis_rn(dim: int):
+    vectors = [
+        _vector(dim, i)[None] for i in range(1, dim)
+    ]
+    return jnp.concatenate(vectors)
+
+@cache
+def ortho_basis_simn(dim: int):
+    return jax.vmap(clr_inv)(ortho_basis_rn(dim))
+    
+    
+def ilr(x):
+    """ x in Sim^D, this function sends it to R^(D-1) according to an orthonormal basis
     """
+    d = x.shape[-1]
+    ortho = ortho_basis_rn(d)
+    return jnp.matmul(ortho, clr(x))
+    
+
+def ilr_inv(y):
+    d = y.shape[-1]
+    basis = ortho_basis_rn(d + 1)
+    return clr_inv(jnp.matmul(jnp.transpose(basis), y))
+    
+    
+def riemann_inv_metric(x):
+    """ The inverse metric tensor g^(-1) of the Riemannian metric on the simplex at point `x`. Also the Jacobian of the softmax at point `x`
     """
-    pass
+    d = x.shape[-1]
+    
+    def same_ind(i, j):
+        return x[i] * (1. - x[i])
+
+    def diff_ind(i, j):
+        return -1. * x[i] * x[j]
+    
+    def _g(i):
+        ks = jnp.arange(d)
+        return jax.lax.map(
+            lambda j: jax.lax.cond(i == j, same_ind, diff_ind, i, j),
+            ks
+        )
+    return jax.lax.map(_g, jnp.arange(d))
+    
 

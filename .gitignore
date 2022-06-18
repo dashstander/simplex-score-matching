@@ -3,9 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+
 # C extensions
 *.so
 
+*.npy
+.DS_Store
 # Distribution / packaging
 .Python
 build/
@@ -127,3 +131,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+.vscode

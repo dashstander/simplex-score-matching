@@ -11,7 +11,7 @@ def _proj_step(x):
 def _vector_simplex_proj(x):
     """Orthogonal projection of a k-dimensional vector onto the k-simplex
     The "vector" algorithm from "Two Fast Algorithms for Projecting a Point on the Canonical Simplex" by Malozemov and Tamasyan
-    @param x 
+    @param x:        jnp.array
     @return x_proj:  jnp.array where jnp.sum(x_proj) == 1. 
     """
     k = x.shape[0]

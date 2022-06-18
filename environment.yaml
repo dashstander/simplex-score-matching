@@ -15,8 +15,10 @@ dependencies:
   - ipywidgets
   - pip:
     - chex
-    - equinox
+    - dm-haiku
+    - einops
     - jax
+    - optax
     - pytest
     - tqdm
     - wandb
