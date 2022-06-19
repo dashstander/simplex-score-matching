@@ -1,19 +1,18 @@
-#!/usr/bin/env python3
-
 import argparse
+import gcsfs
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import jax.random as jrand
 from omegaconf import OmegaConf
 import optax
-from pathlib import Path
 import pickle
 import ray
 import time
 from tqdm import tqdm, trange
 import wandb
 
+from ssm.data import tokenize_and_split
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,
@@ -31,11 +30,19 @@ p.add_argument('--seed', type=int, default=0,
 p.add_argument('--run-name', type=str, default='SSM Diffusion')
 
 
-def get_datasets(config):
-    data_fp = Path(config.data_dir)
-    train_data = ray.data.read_numpy(data_fp / config.train_path)
-    val_data = ray.data.read_numpy(data_fp / config.val_path)
-    return train_data, val_data
+def get_dataset(config):
+    fs = gcsfs.GCSFileSystem(project=config.gcs.project)
+    data = (
+        ray.data.read_numpy(config.data.dataset_path, filesystems=fs)
+        .shuffle()
+        .repeat(config.data.epochs)
+        .window(blocks_per_window=2)
+        .map_batch(tokens_to_probs)
+    )
+    return data
+
+
+    
 
 
 def resume_training(checkpoint_file):
@@ -99,7 +106,7 @@ def main(args):
     num_processes = jax.process_count()
     local_rank = jax.process_index()
 
-    train_data, eval_data = get_datasets(config)
+    train_data = get_dataset(config)
 
     ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(config.ema_decay_rate)(x))
 
@@ -137,12 +144,12 @@ def main(args):
     )
     jit_time = time.time() - jit_start
     print(f'It took {jit_time}s to compile the train_step function.')
-    def train_one_epoch(params, params_ema, opt_state, key):
+    def train_one_epoch(params, params_ema, opt_state, data, key):
         key, subkey = jrand.split(key)
         seed = jrand.randint(subkey, (1,), 0, 100000)
-        data = train_data.random_shuffle(seed)
-        train_iter = data.iter_batches(prefetch_blocks=4, batch_size=config.batch_size)
-        for i, batch in enumerate(tqdm(train_iter)):
+        # data = train_data.random_shuffle(seed)
+        # train_iter = data.iter_batches(prefetch_blocks=4, batch_size=config.batch_size)
+        for i, batch in enumerate(tqdm(data.iter_batches(config.batch_size))):
             key, curr_key, *local_keys = jax.random.split(key, 2 + num_local_devices)
             batch = tokens_to_probs(
                 curr_key,

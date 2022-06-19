@@ -2,6 +2,7 @@ import chex
 import jax
 import jax.numpy as jnp
 import jax.random as jrand
+import numpy as np
 
 """ Signal / Noise ratio utils stolen shamelessly from @crowsonkb,
 https://github.com/crowsonkb/v-diffusion-jax/blob/master/diffusion/utils.py
@@ -56,16 +57,22 @@ def punsplit(x):
 
 
 
-def tokens_to_probs(key, token_ids, concentration=0.9, vocab_size=30_522):
-    """ For time t=0, defines a point on the simplex for each token of the sequence.
+def tokens_to_probs(rng, token_ids, concentration=0.9, vocab_size=8192):
+    batch, seq_len = token_ids.shape
     
-    The true token is set to `concentration` and the remaining tokens are randomly assigned the remain probability sampled from the `vocab_size - 1` simplex 
-    """
-    seq_len = token_ids.shape[-1]
-    concentrations = jnp.full((seq_len, 1), concentration)
-    other_probs = jrand.dirichlet(key, alpha=jnp.ones(vocab_size - 1,), shape=(seq_len,)) * (1 - concentration)
-    probs = jnp.concatenate([concentrations, other_probs], axis=1)
-    return jax.vmap(jnp.roll)(probs, token_ids)
+    def _tokens_to_probs(token_ids):
+        x = rng.random((seq_len, vocab_size)) / vocab_size
+        # At this point E(x.sum()) == 0.5 
+        # What we want is for new_val / (x.sum() + new_val) ~ concentration
+        # --> new_val == (concentration * x.sum())/(1 - concentration)
+        # Then, in the normalized vector, the appropriate token will have ~ concentration weight,
+        # and the others will have the rest
+        x_sum = x.sum(axis=1)
+        conc_val = np.mean((concentration * x_sum) / (1 - concentration))
+        np.put_along_axis(x, token_ids[:, None], conc_val, axis=1)
+        return x / x.sum(axis=1)[:, None]
+    return np.apply_along_axis(_tokens_to_probs, axis=1, arr=token_ids)
+
 
 
 def probs_to_tokens(key, tokenizer, token_probs: chex.Array):

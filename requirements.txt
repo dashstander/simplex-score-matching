@@ -2,6 +2,7 @@ chex
 datasets
 dm-haiku
 einops
+gcsfs
 matplotlib
 omegaconf
 optax

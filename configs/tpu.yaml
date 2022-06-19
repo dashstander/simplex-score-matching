@@ -1,0 +1,30 @@
+description: "Small model to test"
+
+
+gcs:
+  project: simplex-score-matching
+
+
+data:
+    epochs: 10
+    dataset_path: "simplex-text-data/train/train"
+    batch_size: 64
+    seq_len: 128
+
+tokenizer:
+    path: "tokenizer/tokenizer-wiki8192.json"
+    vocab_size: 8192
+
+model:
+    type: transformer
+    num_layers: 3
+    num_heads: 4
+    embed_dim: 256
+    init_dim: 256
+    model_dim: 256
+    time_dim: 16
+
+optimizer:
+    algo: AdamW
+    lr: 0.001
+    grad_clip: 2.0

@@ -22,12 +22,12 @@ def tokenize_and_split(tokenizer_fp, seq_len, batch):
     texts = '[SEP]'.join(batch['text'])
     cls_token = tokenizer.token_to_id('[CLS]')
     pad_token = tokenizer.token_to_id('[PAD]')
-    token_ids = np.array(tokenizer.encode(texts).ids)
+    token_ids = np.array(tokenizer.encode(texts).ids, dtype=np.uint16)
     leftover = token_ids.shape[0] % (seq_len - 1)
-    pads = np.full(((seq_len - 1) - leftover,), pad_token)
+    pads = np.full(((seq_len - 1) - leftover,), pad_token, dtype=np.uint16)
     split_tokens = np.append(token_ids, pads).reshape((-1, seq_len - 1))
     num_splits = split_tokens.shape[0]
-    extra_cls_tokens = np.full((num_splits, 1), cls_token)
+    extra_cls_tokens = np.full((num_splits, 1), cls_token, dtype=np.uint16)
     fully_tokenized = np.hstack([extra_cls_tokens, split_tokens])
     return fully_tokenized
 
@@ -67,7 +67,6 @@ def main(args):
         if i // 50 == 0:
             print(f'Saved {total_rows} records')
     
-
 
 if __name__ == '__main__':
     args, _ = parser.parse_known_args()
