@@ -6,7 +6,7 @@ from functools import partial
 import numpy as np
 from pathlib import Path
 from tokenizers import Tokenizer
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 
 parser = ArgumentParser()
@@ -42,7 +42,7 @@ def save_chunk(tokenize_fn, path, index , data):
 
 def main(args):
     data = load_dataset("wikipedia", "20220301.en")[args.split]
-    fp = Path('data') / args.split
+    fp = Path('/media/dashille/data0/wiki') / args.split
     tokenize_fn = partial(tokenize_and_split, args.tokenizer_fp, args.seq_len)
     save_chunk_fn = partial(save_chunk, tokenize_fn, fp)
     num_rows = data.num_rows
@@ -50,12 +50,10 @@ def main(args):
     futures = []
     chunk_size = args.chunk_size
     with ThreadPoolExecutor(max_workers=32) as executor:
-        for chunk_no, i in enumerate(range(0, num_rows, chunk_size)):
+        for chunk_no, i in enumerate(trange(0, num_rows, chunk_size)):
             j = min(i + chunk_size, num_rows)
             chunk = data[i:j]
             futures.append(executor.submit(save_chunk_fn, chunk_no, chunk))
-            if i % 5 == 0:
-                print(f'Submitted {i} chunks')
     total_rows = 0
     for i, fut in tqdm(enumerate(as_completed(futures))):
         try:
