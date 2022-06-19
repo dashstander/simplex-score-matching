@@ -10,6 +10,7 @@ data:
     dataset_path: "simplex-text-data/train/train"
     batch_size: 64
     seq_len: 128
+    init_prob_concentration: 0.9
 
 tokenizer:
     path: "tokenizer/tokenizer-wiki8192.json"

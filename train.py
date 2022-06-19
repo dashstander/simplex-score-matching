@@ -4,6 +4,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import jax.random as jrand
+import numpy as np
 from omegaconf import OmegaConf
 import optax
 import pickle
@@ -12,7 +13,7 @@ import time
 from tqdm import tqdm, trange
 import wandb
 
-from ssm.data import tokenize_and_split
+from ssm.data import tokenize_and_split, TokenToProbsProcessor
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,
@@ -34,10 +35,9 @@ def get_dataset(config):
     fs = gcsfs.GCSFileSystem(project=config.gcs.project)
     data = (
         ray.data.read_numpy(config.data.dataset_path, filesystems=fs)
-        .shuffle()
+        .repartition(num_blocks=1000)
         .repeat(config.data.epochs)
         .window(blocks_per_window=2)
-        .map_batch(tokens_to_probs)
     )
     return data
 
@@ -107,6 +107,11 @@ def main(args):
     local_rank = jax.process_index()
 
     train_data = get_dataset(config)
+    np_seeds = np.random.SeedSequence(args.seed)
+
+    preproc_pool = ray.util.ActorPool(
+        [TokenToProbsProcessor.remote(s, config) for s in np_seeds.spawn(2)]
+    )
 
     ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(config.ema_decay_rate)(x))
 
@@ -145,11 +150,8 @@ def main(args):
     jit_time = time.time() - jit_start
     print(f'It took {jit_time}s to compile the train_step function.')
     def train_one_epoch(params, params_ema, opt_state, data, key):
-        key, subkey = jrand.split(key)
-        seed = jrand.randint(subkey, (1,), 0, 100000)
-        # data = train_data.random_shuffle(seed)
-        # train_iter = data.iter_batches(prefetch_blocks=4, batch_size=config.batch_size)
-        for i, batch in enumerate(tqdm(data.iter_batches(config.batch_size))):
+        data_iterator = preproc_pool.map_unordered(data.iter_batches(config.batch_size))
+        for i, batch in enumerate(tqdm(data_iterator)):
             key, curr_key, *local_keys = jax.random.split(key, 2 + num_local_devices)
             batch = tokens_to_probs(
                 curr_key,
@@ -176,11 +178,11 @@ def main(args):
 
     try:
         key, subkey = jax.random.split(key)
-        for i in trange(config.epochs):
+        for epoch, epoch_data in tqdm(train_data.iter_epochs()):
             tqdm.write(f'Epoch {epoch}')
             key, *subkeys = jax.random.split(key, 3)
-            params, params_ema, opt_state, ema_state = train_one_epoch(params, params_ema, opt_state, subkeys[0])
-            save(params, params_ema, opt_state, i, subkeys[1])
+            params, params_ema, opt_state, ema_state = train_one_epoch(params, params_ema, opt_state, epoch_data, subkeys[0])
+            save(params, params_ema, opt_state, epoch, subkeys[1])
     except KeyboardInterrupt:
         pass
 

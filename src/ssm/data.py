@@ -1,17 +1,17 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import jax.numpy as jnp
 import ray
-from ray.data.impl.compute import ActorPoolStrategy
 
 
 
-
+@ray.remote
 class TokenToProbsProcessor:
 
-    def __init__(self, rng, concentration: float, vocab_size: int):
-        self.rng = rng
-        self.concentration = concentration
-        self.vocab_size = vocab_size
+    def __init__(self, seed, config):
+        self.rng = np.random.default_rng(seed)
+        self.concentration = config.data.init_prob_concentration
+        self.vocab_size = config.tokenizer.vocab_size
 
     def __call__(self, tokens):
         batch, seq_len, = tokens.shape
@@ -27,11 +27,8 @@ class TokenToProbsProcessor:
             conc_val = np.mean((self.concentration * x_sum) / (1 - self.concentration))
             np.put_along_axis(x, token_ids[:, None], conc_val, axis=1)
             return x / x.sum(axis=1)[:, None]
-            
+
         return np.apply_along_axis(_tokens_to_probs, axis=1, arr=tokens)
-
-   
-
 
 
 def tokenize_and_split(tokenizer, seq_len, batch):

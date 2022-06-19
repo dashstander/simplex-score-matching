@@ -13,6 +13,7 @@ dependencies:
   - jupyterlab
   - ipykernel
   - ipywidgets
+  - tensorflow
   - pip:
     - chex
     - dm-haiku
