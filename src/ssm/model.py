@@ -1,10 +1,29 @@
 from einops import rearrange, repeat
-import haiku as hk
+from flax import linen as nn
+from flax import struct
 import jax
 import jax.numpy as jnp
 import numpy as np
+from typing import Callable, Sequence
+
 
 from ssm.utils import alpha_sigma_to_log_snr, t_to_alpha_sigma
+
+
+@struct.dataclass
+class TransformerConfig:
+    vocab_size: int
+    embed_dim: int
+    model_dim: int
+    mlp_dim: int
+    num_layers: int = 3
+    time_dim: int = 16
+    num_heads: int = 8
+    max_len: int = 512
+    dropout_rate: float = 0.1
+    attention_dropout_rate: float = 0.1
+    kernel_init: Callable = nn.initializers.xavier_uniform()
+    fourier_init_std: float = 0.2
 
 
 def fixed_pos_embedding(x, seq_dim=0):
@@ -35,141 +54,105 @@ def apply_rotary_pos_emb(x, sincos):
 
 
 
-class FourierFeatures(hk.Module):
-    def __init__(self, output_size, std=1., name=None):
-        super().__init__(name=name)
-        assert output_size % 2 == 0
-        self.output_size = output_size
-        self.std = std
+class RMSNorm(nn.Module):
 
+    @nn.compact
+    def forward(self, x):
+        eps = 1e-8
+        dim = x.shape[-1]
+        scale = jnp.pow(dim, -0.5)
+        g = self.param('g', nn.initializers.ones(), dim)
+        norm = jax.nn.normalize(x, axis=-1) * scale
+        return x / jax.lax.clamp(eps, norm) * g
+
+
+
+class FourierFeatures(nn.Module):
+    config: TransformerConfig
+
+    @nn.compact
     def __call__(self, x):
-        w = hk.get_parameter(
+        w = self.param(
             'w',
-            [self.output_size // 2, x.shape[1]],
-            init=hk.initializers.RandomNormal(self.std, 0)
+            nn.initializers.normal(stddev=self.config.fourier_init_std)
+            (self.config.time_dim // 2, x.shape[1]),
         )
         f = 2 * jnp.pi * x @ w.T
         return jnp.concatenate([jnp.cos(f), jnp.sin(f)], axis=-1)
 
 
-class SelfAttention(hk.Module):
-    def __init__(self, num_heads=1, name=None):
-        super().__init__(name=name)
-        self.num_heads = num_heads
+class SelfAttention(nn.Module):
+    config: TransformerConfig
 
+    @nn.compact
     def __call__(self, x, padding_mask=None):
-        # d_model = x.shape[-1]
-        x = hk.RMSNorm(axis=-1)(x)
+        x = RMSNorm()(x)
         padding_mask = None if padding_mask is None else padding_mask[:, None, None, :]
-        x = hk.MultiHeadAttention(
-            self.num_heads,
-            x.shape[-1] // self.num_heads,
-            1.
-        )(x, x, x, padding_mask)
+        x = nn.MultiHeadDotProductAttention(
+            self.config.num_heads,
+            dropout_rate=self.config.attention_dropout_rate
+        )(x, x, padding_mask)
         return x
 
 
-class FeedForward(hk.Module):
+class FeedForward(nn.Module):
+    config: TransformerConfig
+
     def __init__(self, d_ff, name=None):
         super().__init__(name=name)
         self.d_ff = d_ff
 
     def __call__(self, x):
-        d_model = x.shape[-1]
-        x = hk.RMSNorm(axis=-1)(x)
-        x = hk.Linear(self.d_ff, name='linear_0')(x)
-        x = jax.nn.gelu(x)
-        x = hk.Linear(d_model, name='linear_1')(x)
+        x = RMSNorm()(x)
+        x = nn.Dense(self.config.mlp_dim, use_bias=False)(x)
+        x = nn.gelu(x)
+        x = nn.Dense(self.config.model_dim, use_bias=False)(x)
         return x
 
 
-class TransformerLayer(hk.Module):
-    def __init__(self, d_ff, n_heads, name=None):
-        super().__init__(name=name)
-        self.d_ff = d_ff
-        self.n_heads = n_heads
-        # self.d_rotary = d_rotary
-        
+class TransformerLayer(nn.Module):
+    config: TransformerConfig
+
+    @nn.compact    
     def __call__(self, x, padding_mask=None):
         #x_rot = x[:, :, :self.d_rotary]
         #x_pass = x[ :, :, self.d_rotary:]
         #sincos = fixed_pos_embedding(x_rot, seq_dim=1)
         #x_rot = apply_rotary_pos_emb(x_rot, sincos)
         #x = jnp.concatenate([x_rot, x_pass], axis=-1)
-        x = x + SelfAttention(self.n_heads)(x, padding_mask)
-        x = x + FeedForward(self.d_ff)(x)
+        x = x + SelfAttention(self.config)(x, padding_mask)
+        x = x + FeedForward(self.config)(x)
         return x
 
 
-class SkipBlock(hk.Module):
-    def __init__(self, main, skip=None):
-        super().__init__()
-        self.main = hk.Sequential(*main)
+class SkipBlock(nn.Module):
+    layers: Sequence[nn.Module]
 
+    @nn.compact
     def __call__(self, x):
+        x_new = nn.Sequential(*self.layers)(x)
         return jnp.concatenate(
-            [self.main(x), x], 
+            [x_new, x], 
             dim=1
         )
 
-class TransformerDiffusion(hk.Module):
 
-    def __init__(self, init_embed, d_embed, time_embed, n_layers, d_model, n_heads, vocab_size, name=None):
-        super().__init__(name=name)
-        self.init_embed = init_embed
-        self.d_embed = d_embed
-        self.time_embed = time_embed
-        self.n_layers = n_layers
-        self.d_model = d_model
-        self.d_ff = self.d_model * 4
-        self.n_heads = n_heads
-        self.vocab_size = vocab_size
+class TransformerDiffusion(nn.Module):
+    config: TransformerConfig
     
     def __call__(self, x, t):
         """
         x.shape = 
         """
-        x_init = hk.Linear(self.init_embed)(x)
+        x_init = nn.Dense(self.config.embed_dim)(x)
         log_snr = alpha_sigma_to_log_snr(t_to_alpha_sigma(t))
-        timestep_embed = FourierFeatures(self.time_embed, 0.2)(log_snr[:, None])
+        timestep_embed = FourierFeatures(self.config)(log_snr[:, None])
         te_planes = jnp.tile(timestep_embed[..., None], [x.shape[0], 1])
         x = jnp.concatenate([x_init, te_planes], axis=1)
-        layers = hk.Sequential( * [
-            TransformerLayer(
-                self.d_ff,
-                self.n_heads,
-                name=f'transformer_{i}'
-            ) for i in range(self.n_layers)
+        layers = nn.Sequential( * [
+            TransformerLayer(self.config) for _ in range(self.n_layers)
         ])
         x = x + jnp.sqrt(2) * layers(x)
-        x_final = hk.Linear(self.vocab_size)(x)
-        return jax.nn.softmax(x_final)
-
-
-
-def get_hk_model(config):
-    assert config.model.type == 'transformer'
-    
-    text_model_fn = lambda *args: TransformerDiffusion(
-        config.model.embed_dim,
-        config.model.num_layers,
-        config.model.d_model,
-        config.model.time_dim,
-        config.model.num_heads,
-        config.tokenizer.vocab_size,
-    )(*args)
-    model = hk.without_apply_rng(hk.transform(text_model_fn))
-    return  model
-
-
-def get_and_init_model(config, key):
-    model = get_hk_model(config)
-    key, subkey = jax.random.split(key)    
-    text_size = config.seq_len
-    vocab_size = config.tokenizer.vocab_size
-    params = model.init(
-        subkey,
-        jnp.zeros([1, text_size, vocab_size], dtype=jnp.int32),
-        jnp.zeros([1,], dtype=jnp.int32)
-    )
-    return params, model.apply
+        x_final = nn.Linear(self.vocab_size)(x)
+        x_var = jnp.var(x_final, axis=-1)
+        return x_final / x_var

@@ -4,18 +4,23 @@ import jax
 import jax.numpy as jnp
 
 
-def perturb(a: chex.Array, b: chex.Array) -> chex.Array:
+def add(a: chex.Array, b: chex.Array) -> chex.Array:
     """ Vector addition on the simplex with the Aitchison geometry
     """
     x = jnp.multiply(a, b)
     return x / jnp.sum(x)
 
 
-def apow(a, alpha) -> chex.Array:
+def mul(a, alpha) -> chex.Array:
     """ Scalar multiplication on the simplex with the Aitchison geometry
     """
-    x =  a ** alpha
+    x =  jnp.pow(a, alpha)
     return x / jnp.sum(x)
+
+
+def distance(x, y):
+    aitch_dist = clr(x) - clr(y)
+    return jnp.dot(aitch_dist, aitch_dist)
 
 
 def aitch_basis(dim: int):
@@ -25,10 +30,10 @@ def aitch_basis(dim: int):
     return basis.at[i].set(jnp.e) / total
 
 
-def clr_inv(x: chex.Array) -> chex.Array:
-    """ The in
+def clr_inv(x: chex.Array, axis=-1, initial=None) -> chex.Array:
+    """ The inverse of the CLR transform. Just the softmax, but the code makes more sense with the aliasing
     """
-    return jax.nn.softmax(x)
+    return jax.nn.softmax(x, axis=axis, initial=initial)
 
 
 def clr(x: chex.Array) -> chex.Array:

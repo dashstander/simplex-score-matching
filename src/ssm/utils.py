@@ -58,6 +58,8 @@ def punsplit(x):
 
 
 def tokens_to_probs(rng, token_ids, concentration=0.9, vocab_size=8192):
+    """ Takes a 
+    """
     batch, seq_len = token_ids.shape
     
     def _tokens_to_probs(token_ids):

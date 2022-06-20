@@ -13,11 +13,11 @@ dependencies:
   - jupyterlab
   - ipykernel
   - ipywidgets
-  - tensorflow
   - pip:
     - chex
-    - dm-haiku
     - einops
+    - flax
+    - gcsfs
     - jax
     - optax
     - pytest

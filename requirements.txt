@@ -1,13 +1,12 @@
 chex
 datasets
-dm-haiku
 einops
+flax
 gcsfs
 matplotlib
 omegaconf
 optax
 pytest
-ray[tpu]
 seaborn
 transformers
 tqdm
