@@ -20,7 +20,9 @@ from ssm.data import TokenToProbsProcessor
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,
-    tokens_to_probs
+    tokens_to_probs,
+    tree_bytes,
+    tree_size
 )
 from ssm.model import TransformerConfig, TransformerDiffusion
 
@@ -137,6 +139,9 @@ def main(args):
         state = checkpoints.restore_checkpoint(args.checkpoint_dir, state)
 
     key = jax.random.split(key, num_processes)[local_rank]
+
+    if local_rank == 0:
+        print(f'Initialized model with {tree_size(state.params)} parameters, taking up {tree_bytes(state.params)/1e9}GB')
     
     def train_epoch(state, data, num_steps: int, key):
         data_iterator = preproc_pool.map_unordered(data.iter_batches(config.batch_size))
