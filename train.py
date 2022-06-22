@@ -28,6 +28,7 @@ from ssm.model import TransformerConfig, TransformerDiffusion
 
 
 p = argparse.ArgumentParser()
+p.add_argument('config', type=str)
 p.add_argument('--resume', type=str,
                    help='the checkpoint to resume from')
 p.add_argument('--seed', type=int, default=0,
@@ -36,12 +37,12 @@ p.add_argument('--run-name', type=str, default='SSM Diffusion')
 
 
 def get_dataset(config):
-    fs = gcsfs.GCSFileSystem(project=config.gcs.project)
     data = (
-        ray.data.read_numpy(config.data.dataset_path, filesystems=fs)
+        ray.data.read_numpy(config.data.dataset_path)
         .repartition(num_blocks=1000)
+        .experimental_lazy()
         .repeat(config.data.epochs)
-        .window(blocks_per_window=2)
+        #.window(blocks_per_window=2)
     )
     return data
 
@@ -85,6 +86,7 @@ def update_model(state, grads):
 
 @functools.partial(jax.pmap, static_broadcasted_argnums=(1,))
 def create_train_state(rng, config):
+    init_rng, dropout_rng = jrand.split(rng)
     transformer_config = TransformerConfig(
         config.tokenizer.vocab_size,
         config.model.embed_dim,
@@ -103,7 +105,7 @@ def create_train_state(rng, config):
     )
     model = TransformerDiffusion(transformer_config)
     params = model.init(
-        rng,
+        {'params': init_rng, 'dropout': dropout_rng},
         jnp.ones([1, config.data.seq_len, config.tokenizer.vocab_size]),
         jnp.ones((1,))    
     )['params']
@@ -144,7 +146,10 @@ def main(args):
         print(f'Initialized model with {tree_size(state.params)} parameters, taking up {tree_bytes(state.params)/1e9}GB')
     
     def train_epoch(state, data, num_steps: int, key):
-        data_iterator = preproc_pool.map_unordered(data.iter_batches(config.batch_size))
+        data_iterator = preproc_pool.map_unordered(
+            lambda a, v: a.to_probs.remote(v),
+            data.iter_batches(config.data.batch_size)
+        )
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
@@ -181,7 +186,7 @@ def main(args):
 
     try:
         num_steps = 0
-        for epoch, epoch_data in tqdm(train_data.iter_epochs()):
+        for epoch, epoch_data in tqdm(enumerate(train_data.iter_epochs())):
             tqdm.write(f'Epoch {epoch}')
             key, *subkeys = jax.random.split(key, 3)
             state, num_steps = train_epoch(state, epoch_data, num_steps, subkeys[0])

@@ -8,6 +8,7 @@ omegaconf
 optax
 pytest
 seaborn
+tensorflow
 transformers
 tqdm
 wandb

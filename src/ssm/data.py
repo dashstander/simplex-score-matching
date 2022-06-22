@@ -2,7 +2,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import jax.numpy as jnp
 import ray
-
+from ray.data.datasource import DefaultFileMetadataProvider
+from ray.data.read_api import read_datasource
 
 
 @ray.remote
@@ -13,7 +14,7 @@ class TokenToProbsProcessor:
         self.concentration = config.data.init_prob_concentration
         self.vocab_size = config.tokenizer.vocab_size
 
-    def __call__(self, tokens):
+    def to_probs(self, tokens):
         batch, seq_len, = tokens.shape
 
         def _tokens_to_probs(token_ids):
@@ -29,6 +30,33 @@ class TokenToProbsProcessor:
             return x / x.sum(axis=1)[:, None]
 
         return np.apply_along_axis(_tokens_to_probs, axis=1, arr=tokens)
+
+
+class NumpyGcsDataSource():
+    pass
+
+
+
+def read_numpy_gcs(
+    paths,
+    *,
+    filesystem = None,
+    parallelism: int = 200,
+    arrow_open_stream_args = None,
+    meta_provider = DefaultFileMetadataProvider(),
+    partition_filter = None,
+    **numpy_load_args,
+):
+    return read_datasource(
+        NumpyDatasource(),
+        parallelism=parallelism,
+        paths=paths,
+        filesystem=filesystem,
+        open_stream_args=arrow_open_stream_args,
+        meta_provider=meta_provider,
+        partition_filter=partition_filter,
+        **numpy_load_args,
+    )
 
 
 def tokenize_and_split(tokenizer, seq_len, batch):

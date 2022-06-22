@@ -1,5 +1,5 @@
 import chex
-from functools import cache
+from functools import lru_cache
 import jax
 import jax.numpy as jnp
 
@@ -51,7 +51,7 @@ def aitch_dot(a: chex.Array, b: chex.Array) -> chex.Scalar:
     return jnp.dot(clr(a), clr(b))
 
 
-@cache
+@lru_cache
 def _vector(dim: int, i: int):
     x = jnp.zeros((dim,))
     x = x.at[0:i].set(1/i).at[i].set(-1)
@@ -59,14 +59,14 @@ def _vector(dim: int, i: int):
     return x
 
 
-@cache
+@lru_cache
 def ortho_basis_rn(dim: int):
     vectors = [
         _vector(dim, i)[None] for i in range(1, dim)
     ]
     return jnp.concatenate(vectors)
 
-@cache
+@lru_cache
 def ortho_basis_simn(dim: int):
     return jax.vmap(clr_inv)(ortho_basis_rn(dim))
     

@@ -19,7 +19,7 @@ class TransformerConfig:
     num_layers: int = 3
     time_dim: int = 16
     num_heads: int = 8
-    max_len: int = 512
+    max_length: int = 512
     dropout_rate: float = 0.1
     attention_dropout_rate: float = 0.1
     # kernel_init: Callable = nn.initializers.xavier_uniform()

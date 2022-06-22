@@ -4,10 +4,10 @@ gcs:
   project: simplex-score-matching
 
 data:
-    epochs: 10
-    dataset_path: "simplex-text-data/train/train"
+    epochs: 20
+    dataset_path: "/home/dashiell/train"
     batch_size: 64
-    seq_len: 128
+    seq_len: 256
     init_prob_concentration: 0.9
 
 tokenizer:
@@ -17,11 +17,11 @@ tokenizer:
 model:
     type: transformer
     num_layers: 3
-    num_heads: 4
-    embed_dim: 256
-    init_dim: 256
-    model_dim: 256
-    mlp_dim: 1024
+    num_heads: 8
+    embed_dim: 512
+    init_dim: 512
+    model_dim: 512
+    mlp_dim: 2048
     time_dim: 16
     dropout: 0.1
     attention_dropout: 0.1
