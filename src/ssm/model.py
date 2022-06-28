@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from typing import Sequence
 
-
+from ssm.aitchison import clr
 from ssm.utils import alpha_sigma_to_log_snr, t_to_alpha_sigma
 
 
@@ -163,5 +163,4 @@ class TransformerDiffusion(nn.Module):
         ])(x, None, deterministic=deterministic)        
         x = x + jnp.sqrt(2) * trans_x
         x_final = nn.Dense(self.config.vocab_size)(x)
-        x_var = jnp.var(x_final, axis=-1)
-        return x_final / x_var[..., None]
+        return clr(x_final, axis=-1, keepdims=True)

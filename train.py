@@ -41,35 +41,24 @@ def get_dataset(config):
     return data
 
 
-@partial(jax.pmap, static_broadcasted_argnums=(3,), axis_name='batch')
-def apply_model(state, texts, key, ilr_inv_fn):
-    vmul = jax.vmap(aitch.mul)
+@partial(jax.pmap, axis_name='batch')
+def apply_model(state, texts, key):
     def loss_fn(params, x, key):
+        """
+        `x` is in $R^{n} in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.$
+        """
         keys = jrand.split(key, 3)
         batch_dim, seq_len, simplex_dim = x.shape
         t = jrand.uniform(keys[0], (x.shape[0],))
         alphas, sigmas = t_to_alpha_sigma(t)
-        # The noise has to be generated on R^{d - 1}, then transformed to be on the simplex
-        real_noise = jrand.normal(keys[1], (batch_dim, simplex_dim - 1, seq_len))
-        # And once it's on the simplex it has to be transformed by the inverse metric tensor (g^{-1}),
-        # which is given by g_inv
-        #simplex_noise = aitch.simplex_metric_tensor_inv(
-        #    x,
-        #    ilr_inv_fn(real_noise).swapaxes(1, 2)
-        #)
-        simplex_noise = ilr_inv_fn(real_noise).swapaxes(1, 2)
-        # Noise has to be added on the simplex, using special Aitchison addition/multiplication operators
-        noised_x = aitch.add(
-             vmul(x, alphas),
-             vmul(simplex_noise, sigmas)
+        # Generate noise 
+        raw_noise = jrand.normal(keys[1], (batch_dim, seq_len, simplex_dim))
+        simplex_scaled_noise = aitch.simplex_metric_tensor_inv(
+            jax.nn.softmax(x, axis=-1),
+            raw_noise
         )
-        simplex_targets = aitch.add(
-            vmul(simplex_noise, alphas),
-            aitch.inverse(vmul(x, sigmas))
-        )
-        # Train the model to predict in centered log ratio coordinates (essentially logits)
-        # Easy softmax transform away from sampling
-        targets = normalize_probabilities(simplex_targets) 
+        noised_x = alphas * x + sigmas * simplex_scaled_noise
+        targets = alphas * simplex_scaled_noise - sigmas * x
         v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
         return jnp.mean((v - targets)**2)
 
@@ -131,12 +120,9 @@ def main(args):
     preproc_pool = ray.util.ActorPool(
         [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
     )
-
-    _, ilr_inv = aitch.make_isometric_transforms(config.tokenizer.vocab_size)
     
     key = jrand.PRNGKey(args.seed)
     
-    #key, *subkeys = jax.random.split(key, num_local_devices + 1)
     key, state_key = jrand.split(key)
     epoch = 0
     train_state = create_train_state(state_key, config)
@@ -151,7 +137,6 @@ def main(args):
         print(f'Initialized model with {tree_size(train_state.params)} parameters, taking up {tree_bytes(train_state.params)/1e9}GB')
     
     train_state = jax_utils.replicate(train_state)
-    #print(train_state.params['Dense_0']['kernel'].shape)
     
     def train_epoch(state, indices, num_steps: int, key):
         data_iterator = preproc_pool.map_unordered(
@@ -167,14 +152,10 @@ def main(args):
             batch_start = time.time()
             key, *local_keys = jax.random.split(key, 1 + num_local_devices)
             texts = psplit(batch, num_local_devices)
-            #print(texts.shape)
-            # print('Doing forward and backward passes')
-            loss, grads = apply_model(state, texts, jnp.stack(local_keys), ilr_inv)
-            #loss, grads = jax.lax.pmean(loss_grads, axis_name='batch')
+            loss, grads = apply_model(state, texts, jnp.stack(local_keys))
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)
-            # params_ema, ema_state = p_ema_update(None, ema_state, None, params)
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
             if jax.process_index() == 0:
