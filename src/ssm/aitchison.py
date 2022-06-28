@@ -1,7 +1,9 @@
+from typing import Callable
 import chex
 from functools import lru_cache
 import jax
 import jax.numpy as jnp
+from typing import Callable, Tuple
 
 
 def add(a: chex.Array, b: chex.Array) -> chex.Array:
@@ -14,8 +16,14 @@ def add(a: chex.Array, b: chex.Array) -> chex.Array:
 def mul(a, alpha) -> chex.Array:
     """ Scalar multiplication on the simplex with the Aitchison geometry
     """
-    x =  jnp.pow(a, alpha)
+    x =  jnp.power(a, alpha)
     return x / jnp.sum(x)
+
+
+@jax.jit
+def inverse(x):
+  x = jax.lax.clamp(1e-14, x, 1e14)
+  return jnp.reciprocal(x)
 
 
 def distance(x, y):
@@ -51,24 +59,42 @@ def aitch_dot(a: chex.Array, b: chex.Array) -> chex.Scalar:
     return jnp.dot(clr(a), clr(b))
 
 
-@lru_cache
-def _vector(dim: int, i: int):
-    x = jnp.zeros((dim,))
-    x = x.at[0:i].set(1/i).at[i].set(-1)
-    x *= jnp.sqrt(i / (i + 1))
-    return x
+def ortho_basis_rn(dim):
+    def j_less(i):
+        return 1 / i
+      
+    def j_equal(i):
+        return -1.
+  
+
+    def basis_fn(i, j):
+        i = i + 1
+        j = j + 1
+        val = jax.lax.cond(
+            j <= i,
+            j_less,
+            lambda index: jax.lax.cond(j == (i + 1), j_equal, lambda _: 0., i),
+            i
+        )
+        return val * jnp.sqrt(i / (i + 1))
+    
+    return jnp.fromfunction(basis_fn, (dim - 1, dim))
 
 
-@lru_cache
-def ortho_basis_rn(dim: int):
-    vectors = [
-        _vector(dim, i)[None] for i in range(1, dim)
-    ]
-    return jnp.concatenate(vectors)
-
-@lru_cache
 def ortho_basis_simn(dim: int):
     return jax.vmap(clr_inv)(ortho_basis_rn(dim))
+
+
+def make_isometric_transforms(dim: int) -> Tuple[Callable]:
+    rn_basis = ortho_basis_rn(dim)
+
+    def ilr(x):
+        return jnp.matmul(rn_basis, clr(x))
+    
+    def ilr_inv(y):
+        return clr_inv(jnp.matmul(jnp.transpose(rn_basis), y))
+    
+    return ilr, ilr_inv
     
     
 def ilr(x):
@@ -85,23 +111,11 @@ def ilr_inv(y):
     return clr_inv(jnp.matmul(jnp.transpose(basis), y))
     
     
-def riemann_inv_metric(x):
-    """ The inverse metric tensor g^(-1) of the Riemannian metric on the simplex at point `x`. Also the Jacobian of the softmax at point `x`
-    """
-    d = x.shape[-1]
-    
-    def same_ind(i, j):
-        return x[i] * (1. - x[i])
-
-    def diff_ind(i, j):
-        return -1. * x[i] * x[j]
-    
-    def _g(i):
-        ks = jnp.arange(d)
-        return jax.lax.map(
-            lambda j: jax.lax.cond(i == j, same_ind, diff_ind, i, j),
-            ks
-        )
-    return jax.lax.map(_g, jnp.arange(d))
-    
+def simplex_metric_tensor_inv(x, v):
+    _, g_inv = jax.jvp(
+        jax.nn.softmax,
+        (x, ),
+        (v, )
+    )
+    return g_inv
 

@@ -1,10 +1,9 @@
 from einops import rearrange, repeat
 from flax import linen as nn
 from flax import struct
-import jax
 import jax.numpy as jnp
 import numpy as np
-from typing import Callable, Sequence
+from typing import Sequence
 
 
 from ssm.utils import alpha_sigma_to_log_snr, t_to_alpha_sigma
@@ -24,6 +23,13 @@ class TransformerConfig:
     attention_dropout_rate: float = 0.1
     # kernel_init: Callable = nn.initializers.xavier_uniform()
     fourier_init_std: float = 0.2
+
+
+def normalize_probabilities(x):
+    logx = jnp.log1p(x)
+    x_mean0 = logx - jnp.mean(logx, axis=-1, keepdims=True)
+    x_normalized = x_mean0 / jnp.var(x_mean0, axis=-1, keepdims=True)
+    return x_normalized
 
 
 def fixed_pos_embedding(x, seq_dim=0):
@@ -62,7 +68,7 @@ class RMSNorm(nn.Module):
         eps = 1e-8
         dim = x.shape[-1]
         scale = jnp.power(dim, -0.5)
-        g = self.param('g', nn.initializers.ones(), (dim,))
+        g = self.param('g', nn.initializers.ones, (dim,))
         norm = jax.nn.normalize(x, axis=-1) * scale
         return x / jax.lax.clamp(eps, norm) * g
 """
@@ -145,10 +151,11 @@ class TransformerDiffusion(nn.Module):
         x.shape = 
         """
         deterministic = not training
+        x = normalize_probabilities(x)
         x_init = nn.Dense(self.config.embed_dim)(x)
         log_snr = alpha_sigma_to_log_snr(*t_to_alpha_sigma(t))
         timestep_embed = FourierFeatures(self.config)(log_snr[:, None])
-        te_planes = jnp.tile(timestep_embed[None], (1, self.config.max_length, 1))
+        te_planes = jnp.tile(timestep_embed[:, None], (1, self.config.max_length, 1))
         x = jnp.concatenate([x_init, te_planes], axis=-1)
         x = FeedForward(self.config)(x)
         trans_x = nn.Sequential([
@@ -158,4 +165,3 @@ class TransformerDiffusion(nn.Module):
         x_final = nn.Dense(self.config.vocab_size)(x)
         x_var = jnp.var(x_final, axis=-1)
         return x_final / x_var[..., None]
-

@@ -9,12 +9,14 @@ from ray.data.read_api import read_datasource
 @ray.remote
 class TokenToProbsProcessor:
 
-    def __init__(self, seed, config):
+    def __init__(self, seed, config, data):
         self.rng = np.random.default_rng(seed)
         self.concentration = config.data.init_prob_concentration
         self.vocab_size = config.tokenizer.vocab_size
+        self.data = data
 
-    def to_probs(self, tokens):
+    def to_probs(self, indices):
+        tokens = self.data[indices, :]
         batch, seq_len, = tokens.shape
 
         def _tokens_to_probs(token_ids):

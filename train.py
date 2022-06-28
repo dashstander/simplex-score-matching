@@ -1,9 +1,9 @@
 import argparse
-import functools
-import gcsfs
+from functools import partial
 from flax import jax_utils
 from flax.training import checkpoints
 from flax.training.train_state import TrainState
+from more_itertools import chunked
 import jax
 import jax.numpy as jnp
 import jax.random as jrand
@@ -12,7 +12,7 @@ from omegaconf import OmegaConf
 import optax
 import ray
 import time
-from tqdm import tqdm
+from tqdm import tqdm, trange
 import wandb
 
 import ssm.aitchison as aitch
@@ -20,11 +20,10 @@ from ssm.data import TokenToProbsProcessor
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,
-    tokens_to_probs,
     tree_bytes,
     tree_size
 )
-from ssm.model import TransformerConfig, TransformerDiffusion
+from ssm.model import normalize_probabilities, TransformerConfig, TransformerDiffusion
 
 
 p = argparse.ArgumentParser()
@@ -34,57 +33,56 @@ p.add_argument('--resume', type=str,
 p.add_argument('--seed', type=int, default=0,
                    help='the random seed')
 p.add_argument('--run-name', type=str, default='SSM Diffusion')
+p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 
 
 def get_dataset(config):
-    data = (
-        ray.data.read_numpy(config.data.dataset_path)
-        .repartition(num_blocks=1000)
-        .experimental_lazy()
-        .repeat(config.data.epochs)
-        #.window(blocks_per_window=2)
-    )
+    data = np.lib.format.open_memmap(config.data.dataset_path, mode='r')
     return data
 
 
-@functools.partial(jax.pmap, axis_name='i')
-def apply_model(state, texts, key):
-
-    def loss_fn(params, key):
-        keys = jrand.split(key, 2)
-        batch_dim, seq_len, simplex_dim = texts.shape
-        t = jrand.uniform(keys[0], texts.shape[:1])
+@partial(jax.pmap, static_broadcasted_argnums=(3,), axis_name='batch')
+def apply_model(state, texts, key, ilr_inv_fn):
+    vmul = jax.vmap(aitch.mul)
+    def loss_fn(params, x, key):
+        keys = jrand.split(key, 3)
+        batch_dim, seq_len, simplex_dim = x.shape
+        t = jrand.uniform(keys[0], (x.shape[0],))
         alphas, sigmas = t_to_alpha_sigma(t)
         # The noise has to be generated on R^{d - 1}, then transformed to be on the simplex
-        real_noise = jrand.normal(keys[1], (batch_dim, seq_len, simplex_dim - 1))
-        simplex_noise = aitch.ilr_inv(real_noise)
+        real_noise = jrand.normal(keys[1], (batch_dim, simplex_dim - 1, seq_len))
+        # And once it's on the simplex it has to be transformed by the inverse metric tensor (g^{-1}),
+        # which is given by g_inv
+        #simplex_noise = aitch.simplex_metric_tensor_inv(
+        #    x,
+        #    ilr_inv_fn(real_noise).swapaxes(1, 2)
+        #)
+        simplex_noise = ilr_inv_fn(real_noise).swapaxes(1, 2)
         # Noise has to be added on the simplex, using special Aitchison addition/multiplication operators
-        noised_texts = aitch.add(
-             aitch.mul(texts, alphas[:, None]),
-             aitch.mul(simplex_noise, sigmas[:, None])
+        noised_x = aitch.add(
+             vmul(x, alphas),
+             vmul(simplex_noise, sigmas)
         )
-        text_targets = aitch.add(
-            aitch.mul(simplex_noise, alphas[:, None]),
-            aitch.mul(aitch.mul(texts, sigmas[:, None]), -1.)
+        simplex_targets = aitch.add(
+            vmul(simplex_noise, alphas),
+            aitch.inverse(vmul(x, sigmas))
         )
-        # Normalize so that the (Euclidean) variance of the data == 1
-        # Just sends the data to a _different_ simplex, which is fine
-        noised_texts = noised_texts / jnp.var(noised_texts, axis=-1)
-        text_targets = text_targets / jnp.var(text_targets, axis=-1)
-        v = TransformerDiffusion().apply({'params': params}, noised_texts, t)
-        return jnp.mean(aitch.dist(v, text_targets))
+        # Train the model to predict in centered log ratio coordinates (essentially logits)
+        # Easy softmax transform away from sampling
+        targets = normalize_probabilities(simplex_targets) 
+        v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
+        return jnp.mean((v - targets)**2)
 
-    outputs = jax.value_and_grad(loss_fn)(state.params, key, texts)
-    loss, grads = jax.lax.pmean(outputs, axis_name='i')        
+    loss_grads = jax.value_and_grad(loss_fn)(state.params, texts, key)
+    loss, grads = jax.lax.pmean(loss_grads, axis_name='batch')
     return loss, grads
 
 
-@jax.pmap
+@partial(jax.pmap, axis_name='batch')
 def update_model(state, grads):
     return state.apply_gradients(grads=grads)
     
 
-@functools.partial(jax.pmap, static_broadcasted_argnums=(1,))
 def create_train_state(rng, config):
     init_rng, dropout_rng = jrand.split(rng)
     transformer_config = TransformerConfig(
@@ -125,46 +123,54 @@ def main(args):
     num_processes = jax.process_count()
     local_rank = jax.process_index()
 
+    print(f'Beginning training with {num_local_devices} devices.')
+
     train_data = get_dataset(config)
     np_seeds = np.random.SeedSequence(args.seed)
 
     preproc_pool = ray.util.ActorPool(
-        [TokenToProbsProcessor.remote(s, config) for s in np_seeds.spawn(2)]
+        [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
     )
-    
-    key = jax.random.PRNGKey(args.seed)
-    
-    key, *subkeys = jax.random.split(key, num_local_devices + 1)
-    epoch = 0
-    state = create_train_state(jnp.stack(subkeys), config)
-    if args.resume:
-        state = checkpoints.restore_checkpoint(args.checkpoint_dir, state)
 
-    key = jax.random.split(key, num_processes)[local_rank]
+    _, ilr_inv = aitch.make_isometric_transforms(config.tokenizer.vocab_size)
+    
+    key = jrand.PRNGKey(args.seed)
+    
+    #key, *subkeys = jax.random.split(key, num_local_devices + 1)
+    key, state_key = jrand.split(key)
+    epoch = 0
+    train_state = create_train_state(state_key, config)
+    if args.resume:
+        train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
+
+    key = jrand.split(key, num_processes)[local_rank]
+
+    dataset_size = train_data.shape[0]
 
     if local_rank == 0:
-        print(f'Initialized model with {tree_size(state.params)} parameters, taking up {tree_bytes(state.params)/1e9}GB')
+        print(f'Initialized model with {tree_size(train_state.params)} parameters, taking up {tree_bytes(train_state.params)/1e9}GB')
     
-    def train_epoch(state, data, num_steps: int, key):
+    train_state = jax_utils.replicate(train_state)
+    #print(train_state.params['Dense_0']['kernel'].shape)
+    
+    def train_epoch(state, indices, num_steps: int, key):
         data_iterator = preproc_pool.map_unordered(
             lambda a, v: a.to_probs.remote(v),
-            data.iter_batches(config.data.batch_size)
+            chunked(indices, config.data.batch_size)
         )
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
-        for batch in tqdm(data_iterator):
+        for batch in tqdm(data_iterator, total=dataset_size // config.data.batch_size):
+            if batch.shape[0] != config.data.batch_size:
+                continue
             batch_start = time.time()
-            key, curr_key, *local_keys = jax.random.split(key, 2 + num_local_devices)
-            batch = tokens_to_probs(
-                curr_key,
-                jnp.asarray(batch),
-                config.concentration,
-                config.vocab_size
-            )
-            texts = jax.tree_map(lambda x: psplit(x, num_local_devices), batch)
-            print('Doing forward and backward passes')
-            grads, loss = apply_model(state, texts, local_keys)
+            key, *local_keys = jax.random.split(key, 1 + num_local_devices)
+            texts = psplit(batch, num_local_devices)
+            #print(texts.shape)
+            # print('Doing forward and backward passes')
+            loss, grads = apply_model(state, texts, jnp.stack(local_keys), ilr_inv)
+            #loss, grads = jax.lax.pmean(loss_grads, axis_name='batch')
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)
@@ -186,12 +192,13 @@ def main(args):
 
     try:
         num_steps = 0
-        for epoch, epoch_data in tqdm(enumerate(train_data.iter_epochs())):
+        for epoch in trange(config.data.epochs):
             tqdm.write(f'Epoch {epoch}')
-            key, *subkeys = jax.random.split(key, 3)
-            state, num_steps = train_epoch(state, epoch_data, num_steps, subkeys[0])
+            key, index_key, *subkeys = jrand.split(key, 3)
+            permuted_indices = jrand.permutation(index_key, dataset_size).tolist()
+            train_state, num_steps = train_epoch(train_state, permuted_indices, num_steps, subkeys[0])
             if jax.process_index() == 0:
-                checkpoints.save_checkpoint(args.checkpoint_dir, state, epoch, prefix='epoch_')
+                checkpoints.save_checkpoint(args.checkpoint_dir, jax_utils.unreplicate(train_state), epoch, prefix='epoch_')
     except KeyboardInterrupt:
         pass
 
