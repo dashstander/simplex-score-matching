@@ -41,6 +41,13 @@ def get_dataset(config):
     return data
 
 
+def check_nan_inf(x, name):
+    is_nan = jnp.any(jnp.isnan(x))
+    is_inf = jnp.any(jnp.isinf(x))
+    print(f'{name} has nan: {is_nan}')
+    print(f'{name} has inf: {is_inf}')
+
+
 @partial(jax.pmap, axis_name='batch')
 def apply_model(state, texts, key):
     def loss_fn(params, x0, key):
@@ -62,11 +69,10 @@ def apply_model(state, texts, key):
         noised_x = alphas * x + sigmas * simplex_scaled_noise
         targets = alphas * simplex_scaled_noise - sigmas * x
         v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
-        return jnp.mean((v - targets)**2)
-
-    loss_grads = jax.value_and_grad(loss_fn)(state.params, texts, key)
-    loss, grads = jax.lax.pmean(loss_grads, axis_name='batch')
-    return loss, grads
+        return jnp.mean((v - targets)**2), v
+    (loss, v), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params, texts, key)
+    #loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
+    return v, loss, grads
 
 
 @partial(jax.pmap, axis_name='batch')
@@ -103,13 +109,6 @@ def create_train_state(rng, config):
 
 def main(args):
     config = OmegaConf.load(args.config)
-    wandb.init(
-        project="simplex-score-matching",
-        entity="dstander",
-        config=config,
-        name=args.run_name
-    )
-
     num_local_devices = jax.local_device_count()
     num_processes = jax.process_count()
     local_rank = jax.process_index()
@@ -154,7 +153,10 @@ def main(args):
             batch_start = time.time()
             key, *local_keys = jax.random.split(key, 1 + num_local_devices)
             texts = psplit(batch, num_local_devices)
-            loss, grads = apply_model(state, texts, jnp.stack(local_keys))
+            v, loss, grads = apply_model(state, texts, jnp.stack(local_keys))
+            check_nan_inf(v, 'v')
+            check_nan_inf(loss, 'loss')
+            check_nan_inf(jax.tree_util.tree_leaves(grads), 'grads')
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)

@@ -163,4 +163,4 @@ class TransformerDiffusion(nn.Module):
         ])(x, None, deterministic=deterministic)        
         x = x + jnp.sqrt(2) * trans_x
         x_final = nn.Dense(self.config.vocab_size)(x)
-        return clr(x_final, axis=-1, keepdims=True)
+        return x_final
