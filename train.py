@@ -43,18 +43,20 @@ def get_dataset(config):
 
 @partial(jax.pmap, axis_name='batch')
 def apply_model(state, texts, key):
-    def loss_fn(params, x, key):
+    def loss_fn(params, x0, key):
         """
         `x` is in $R^{n} in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.$
         """
         keys = jrand.split(key, 3)
-        batch_dim, seq_len, simplex_dim = x.shape
-        t = jrand.uniform(keys[0], (x.shape[0],))
+        batch_dim, seq_len, simplex_dim = x0.shape
+        t = jrand.uniform(keys[0], (x0.shape[0],))
         alphas, sigmas = t_to_alpha_sigma(t)
-        # Generate noise 
+        alphas, sigmas = jnp.expand_dims(alphas, (1, 2)), jnp.expand_dims(sigmas, (1, 2))
+        # Generate noise
         raw_noise = jrand.normal(keys[1], (batch_dim, seq_len, simplex_dim))
+        x = aitch.clr(x0, axis=-1, keepdims=True)
         simplex_scaled_noise = aitch.simplex_metric_tensor_inv(
-            jax.nn.softmax(x, axis=-1),
+            x0,
             raw_noise
         )
         noised_x = alphas * x + sigmas * simplex_scaled_noise

@@ -151,7 +151,7 @@ class TransformerDiffusion(nn.Module):
         x.shape = 
         """
         deterministic = not training
-        x = normalize_probabilities(x)
+        #x = normalize_probabilities(x)
         x_init = nn.Dense(self.config.embed_dim)(x)
         log_snr = alpha_sigma_to_log_snr(*t_to_alpha_sigma(t))
         timestep_embed = FourierFeatures(self.config)(log_snr[:, None])
