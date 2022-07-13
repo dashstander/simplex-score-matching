@@ -1,5 +1,6 @@
 chex
 datasets
+diffrax
 einops
 flax
 gcsfs

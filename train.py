@@ -64,8 +64,8 @@ def apply_model(state, texts, key):
         v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
         return jnp.mean((v - targets)**2)
 
-    loss_grads = jax.value_and_grad(loss_fn)(state.params, texts, key)
-    loss, grads = jax.lax.pmean(loss_grads, axis_name='batch')
+    loss, grads = jax.value_and_grad(loss_fn)(state.params, texts, key)
+    loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
     return loss, grads
 
 

@@ -1,7 +1,4 @@
-import chex
-import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 
 """Functions to visualize stuff happening on the 3-simplex
 """
