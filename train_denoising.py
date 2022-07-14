@@ -6,7 +6,7 @@ from flax.training.train_state import TrainState
 from more_itertools import chunked
 import jax
 import jax.numpy as jnp
-from jax.random import split as rng_split
+import jax.random as jrand
 import numpy as np
 from omegaconf import OmegaConf
 import optax
@@ -19,11 +19,11 @@ import ssm.aitchison as aitch
 from ssm.data import TokenToProbsProcessor
 from ssm.utils import (
     psplit,
+    t_to_alpha_sigma,
     tree_bytes,
     tree_size
 )
 from ssm.model import TransformerConfig, TransformerDiffusion
-from ssm.sde import dirichlet_forward_sde
 
 
 p = argparse.ArgumentParser()
@@ -42,34 +42,29 @@ def get_dataset(config):
 
 
 @partial(jax.pmap, axis_name='batch')
-def forward_noising(texts, times, key):
-    texts = aitch.clr(texts, axis=-1, keepdims=True)
-    texts = texts / jnp.var(texts, axis=-1, keepdims=True)
-    sde_keys = jnp.stack(rng_split(key, texts.shape[0]))
-    return dirichlet_forward_sde(texts, times, sde_keys)
-
-
-@partial(jax.pmap, axis_name='batch')
-def apply_model(state, noised_texts, t, key):
-    def loss_fn(params, xt, t, key):
+def apply_model(state, texts, key):
+    def loss_fn(params, x0, key):
         """
-        $x\in\mathbb{R}^{n}$ is in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.
+        `x` is in $R^{n} in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.$
         """
-        model_key, hutch_key = rng_split(key, 4)
-        # v as defined in Sliced Score Matching
-        v = jax.random.normal(hutch_key, xt.shape)
-        def score_fn(x):
-            return state.apply_fn({'params': params}, x, t, rngs={'dropout': model_key})
-        score, score_grad_dot_v = jax.jvp(
-            score_fn,
-            (xt,),
-            (v,)
-        ) 
-        score_norm = jnp.power(score, 2).sum(dim=-1)
-        hutchinson_est = jax.vmap(jnp.tensordot)(v, score_grad_dot_v)
-        return 0.5 * score_norm + hutchinson_est
+        keys = jrand.split(key, 3)
+        batch_dim, seq_len, simplex_dim = x0.shape
+        t = jrand.uniform(keys[0], (x0.shape[0],))
+        alphas, sigmas = t_to_alpha_sigma(t)
+        alphas, sigmas = jnp.expand_dims(alphas, (1, 2)), jnp.expand_dims(sigmas, (1, 2))
+        # Generate noise
+        raw_noise = jrand.normal(keys[1], (batch_dim, seq_len, simplex_dim))
+        x = aitch.clr(x0, axis=-1, keepdims=True)
+        simplex_scaled_noise = aitch.simplex_metric_tensor_inv(
+            x0,
+            raw_noise
+        )
+        noised_x = alphas * x + sigmas * simplex_scaled_noise
+        targets = alphas * simplex_scaled_noise - sigmas * x
+        v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
+        return jnp.mean((v - targets)**2)
 
-    loss, grads = jax.value_and_grad(loss_fn)(state.params, noised_texts, t, key)
+    loss, grads = jax.value_and_grad(loss_fn)(state.params, texts, key)
     loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
     return loss, grads
 
@@ -80,7 +75,7 @@ def update_model(state, grads):
     
 
 def create_train_state(rng, config):
-    init_rng, dropout_rng = rng_split(rng)
+    init_rng, dropout_rng = jrand.split(rng)
     transformer_config = TransformerConfig(
         config.tokenizer.vocab_size,
         config.model.embed_dim,
@@ -128,15 +123,15 @@ def main(args):
         [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
     )
     
-    key = jax.random.PRNGKey(args.seed)
+    key = jrand.PRNGKey(args.seed)
     
-    key, state_key = rng_split(key)
+    key, state_key = jrand.split(key)
     epoch = 0
     train_state = create_train_state(state_key, config)
     if args.resume:
         train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
 
-    key = rng_split(key, num_processes)[local_rank]
+    key = jrand.split(key, num_processes)[local_rank]
 
     dataset_size = train_data.shape[0]
 
@@ -153,18 +148,13 @@ def main(args):
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
-        batch_size = config.data.batch_size
-        for batch in tqdm(data_iterator, total=dataset_size // batch_size):
-            if batch.shape[0] != batch_size:
+        for batch in tqdm(data_iterator, total=dataset_size // config.data.batch_size):
+            if batch.shape[0] != config.data.batch_size:
                 continue
             batch_start = time.time()
-            key, time_key, sde_key, *local_keys = rng_split(key, 3 + num_local_devices)
-            sde_keys = psplit(jnp.stack(rng_split(sde_key, num_local_devices)))
-            texts = psplit(texts, num_local_devices)
-            times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
-            
-            noised_texts = forward_noising(texts, times, sde_keys)
-            loss, grads = apply_model(state, noised_texts, times, psplit(jnp.stack(local_keys)))
+            key, *local_keys = jax.random.split(key, 1 + num_local_devices)
+            texts = psplit(batch, num_local_devices)
+            loss, grads = apply_model(state, texts, jnp.stack(local_keys))
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)
@@ -187,8 +177,8 @@ def main(args):
         num_steps = 0
         for epoch in trange(config.data.epochs):
             tqdm.write(f'Epoch {epoch}')
-            key, index_key, *subkeys = rng_split(key, 3)
-            permuted_indices = jax.random.permutation(index_key, dataset_size).tolist()
+            key, index_key, *subkeys = jrand.split(key, 3)
+            permuted_indices = jrand.permutation(index_key, dataset_size).tolist()
             train_state, num_steps = train_epoch(train_state, permuted_indices, num_steps, subkeys[0])
             if jax.process_index() == 0:
                 checkpoints.save_checkpoint(args.checkpoint_dir, jax_utils.unreplicate(train_state), epoch, prefix='epoch_')
