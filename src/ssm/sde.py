@@ -78,7 +78,10 @@ def dirichlet_reverse_sde(model, size, t1, key):
     solver = Euler()
     sol = diffeqsolve(terms, solver, t1, t0, dt0=-0.1, y0=aitch.clr(x1))
     return sol.ys[0]
-    
 
 
+
+def sample(logits, tokenizer, key):
+    token_ids = jax.random.categorical(key, logits)
+    return tokenizer.decode(token_ids)
 

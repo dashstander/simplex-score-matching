@@ -1,9 +1,17 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
+import jax
 import jax.numpy as jnp
 import ray
 from ray.data.datasource import DefaultFileMetadataProvider
 from ray.data.read_api import read_datasource
+
+
+
+
+def sample(logits, tokenizer, key):
+    token_ids = jax.random.categorical(key, logits)
+    return tokenizer.decode(token_ids)
 
 
 @ray.remote
@@ -32,10 +40,6 @@ class TokenToProbsProcessor:
             return x / x.sum(axis=1)[:, None]
 
         return np.apply_along_axis(_tokens_to_probs, axis=1, arr=tokens)
-
-
-class NumpyGcsDataSource():
-    pass
 
 
 

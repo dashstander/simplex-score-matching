@@ -8,6 +8,7 @@ data:
     dataset_path: "/home/dashiell/wiki_tokens_512.npy"
     batch_size: 64
     seq_len: 512
+    val_size: 2048
     init_prob_concentration: 0.9
 
 tokenizer:
