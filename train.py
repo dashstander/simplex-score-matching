@@ -2,7 +2,6 @@ import argparse
 from functools import partial
 from flax import jax_utils
 from flax.training import checkpoints
-from flax.training.train_state import TrainState
 from more_itertools import chunked
 import jax
 import jax.numpy as jnp
@@ -22,7 +21,7 @@ from ssm.utils import (
     tree_bytes,
     tree_size
 )
-from ssm.model import TransformerConfig, TransformerDiffusion
+from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
 
 
@@ -42,35 +41,33 @@ def get_dataset(config):
 
 
 @partial(jax.pmap, axis_name='batch')
-def forward_noising(texts, times, key):
+def forward_noising(texts, times, keys):
     texts = aitch.clr(texts, axis=-1, keepdims=True)
     texts = texts / jnp.var(texts, axis=-1, keepdims=True)
-    sde_keys = jnp.stack(rng_split(key, texts.shape[0]))
-    return dirichlet_forward_sde(texts, times, sde_keys)
+    return dirichlet_forward_sde(texts, times, keys)
 
 
-def loss_fn(params, state, xt, t, key):
+def loss_fn(params, state, xt, t, keys):
     """
     $x\in\mathbb{R}^{n}$ is in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.
     """
-    model_key, hutch_key = rng_split(key, 4)
     # v as defined in Sliced Score Matching
-    v = jax.random.normal(hutch_key, xt.shape)
+    v = jax.random.normal(keys[0], xt.shape)
     def score_fn(x):
-        return state.apply_fn({'params': params}, x, t, rngs={'dropout': model_key})
+        return state.apply_fn({'params': params}, x, t, rngs={'dropout': keys[1]})
     score, score_grad_dot_v = jax.jvp(
         score_fn,
         (xt,),
         (v,)
     ) 
-    score_norm = jnp.power(score, 2).sum(dim=-1)
-    hutchinson_est = jax.vmap(jnp.tensordot)(v, score_grad_dot_v)
+    score_norm = jnp.power(score, 2).sum()
+    hutchinson_est = jax.vmap(jnp.tensordot)(v, score_grad_dot_v).sum()
     return 0.5 * score_norm + hutchinson_est
 
 
 @partial(jax.pmap, axis_name='batch')
-def apply_model(state, noised_texts, t, key):
-    loss, grads = jax.value_and_grad(loss_fn)(state.params, state, noised_texts, t, key)
+def apply_model(state, noised_texts, t, keys):
+    loss, grads = jax.value_and_grad(loss_fn)(state.params, state, noised_texts, t, keys)
     loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
     return loss, grads
 
@@ -87,31 +84,12 @@ def update_model(state, grads):
     return state.apply_gradients(grads=grads)
 
 
-def create_train_state(rng, config):
-    init_rng, dropout_rng = rng_split(rng)
-    transformer_config = TransformerConfig(
-        config.tokenizer.vocab_size,
-        config.model.embed_dim,
-        config.model.model_dim,
-        config.model.mlp_dim,
-        config.model.num_layers,
-        config.model.time_dim,
-        config.model.num_heads,
-        config.data.seq_len,
-        config.model.dropout,
-        config.model.attention_dropout
-    )
+def make_optimizer(config):
     opt = optax.chain(
         optax.adamw(config.optimizer.lr),    
         optax.clip(config.optimizer.grad_clip)
     )
-    model = TransformerDiffusion(transformer_config)
-    params = model.init(
-        {'params': init_rng, 'dropout': dropout_rng},
-        jnp.ones([1, config.data.seq_len, config.tokenizer.vocab_size]),
-        jnp.ones((1,))    
-    )['params']
-    return TrainState.create(apply_fn=model.apply, params=params, tx=opt)
+    return opt
 
 
 def main(args):
@@ -140,7 +118,8 @@ def main(args):
     
     key, state_key = rng_split(key)
     epoch = 0
-    train_state = create_train_state(state_key, config)
+    opt = make_optimizer(config)
+    train_state = create_train_state(state_key, config, opt)
     if args.resume:
         train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
 
@@ -192,18 +171,21 @@ def main(args):
             if batch.shape[0] != batch_size:
                 continue
             batch_start = time.time()
-            key, time_key, sde_key, *local_keys = rng_split(key, 3 + num_local_devices)
-            sde_keys = psplit(jnp.stack(rng_split(sde_key, num_local_devices)))
-            texts = psplit(texts, num_local_devices)
+            key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
+            sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
+            texts = psplit(batch, num_local_devices)
             times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
             noised_texts = forward_noising(texts, times, sde_keys)
-            loss, grads = apply_model(state, noised_texts, times, psplit(jnp.stack(local_keys)))
+            forward_sde_time = time.time() - batch_start
+            loss, grads = apply_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)
             epoch_losses.append(single_loss)
-            batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
+            batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start, 'forward_sde/time': forward_sde_time}
             i += 1
+            if i % 5 == 0:
+                batch_log['model/gradients'] = grads
             if i % 50 == 0:
                 val_start = time.time()
                 key, eval_key = rng_split(key)

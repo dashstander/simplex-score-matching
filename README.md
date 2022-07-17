@@ -1,1 +1,2 @@
-# simplex-score-matching
+# Generative Modeling via Score Matching on the Simplex
+

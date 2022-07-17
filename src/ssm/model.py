@@ -1,11 +1,12 @@
 from einops import rearrange, repeat
 from flax import linen as nn
 from flax import struct
+from flax.training.train_state import TrainState
+import jax
 import jax.numpy as jnp
 import numpy as np
 from typing import Sequence
 
-from ssm.aitchison import clr
 from ssm.utils import alpha_sigma_to_log_snr, t_to_alpha_sigma
 
 
@@ -164,3 +165,27 @@ class TransformerDiffusion(nn.Module):
         x = x + jnp.sqrt(2) * trans_x
         x_final = nn.Dense(self.config.vocab_size)(x)
         return x_final
+
+
+def create_train_state(rng, config, optimizer):
+    init_rng, dropout_rng = jax.random.split(rng)
+    transformer_config = TransformerConfig(
+        config.tokenizer.vocab_size,
+        config.model.embed_dim,
+        config.model.model_dim,
+        config.model.mlp_dim,
+        config.model.num_layers,
+        config.model.time_dim,
+        config.model.num_heads,
+        config.data.seq_len,
+        config.model.dropout,
+        config.model.attention_dropout
+    )
+
+    model = TransformerDiffusion(transformer_config)
+    params = model.init(
+        {'params': init_rng, 'dropout': dropout_rng},
+        jnp.ones([1, config.data.seq_len, config.tokenizer.vocab_size]),
+        jnp.ones((1,))    
+    )['params']
+    return TrainState.create(apply_fn=model.apply, params=params, tx=optimizer)

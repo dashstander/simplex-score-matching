@@ -1,4 +1,4 @@
-description: "Small model to test"
+description: "Small model to test, runs on a v2-8 TPU"
 
 gcs:
   project: simplex-score-matching
@@ -9,11 +9,16 @@ data:
     batch_size: 64
     seq_len: 512
     val_size: 2048
-    init_prob_concentration: 0.9
+    min_init_prob_concentration: 0.05
+    max_init_prob_concentration: 0.9
 
 tokenizer:
     path: "tokenizer/tokenizer-wiki8192.json"
     vocab_size: 8192
+  
+sde:
+  start_time: 0
+  end_time: 10
 
 model:
     type: transformer
