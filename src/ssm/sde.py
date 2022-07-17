@@ -58,9 +58,9 @@ def dirichlet_forward_sde(x0, t1, key):
     """
     t0 = 0
     brownian_motion = VirtualBrownianTree(t0, t1, tol=0.05, shape=x0.shape, key=key)
-    terms = MultiTerm(ODETerm(drift_potential), SimplexControlTerm(brownian_motion))
+    terms = MultiTerm(ODETerm(drift_potential), SimplexControlTerm(lambda t, y, args: y, brownian_motion))
     solver = Euler()
-    sol = diffeqsolve(terms, solver, t0, t1, dt0=0.1, y0=aitch.clr(x0))
+    sol = diffeqsolve(terms, solver, t0, t1, dt0=0.1, y0=aitch.clr(x0, axis=-1, keepdims=True))
     return sol.ys[0]
 
 
@@ -76,12 +76,6 @@ def dirichlet_reverse_sde(model, size, t1, key):
     brownian_motion = VirtualBrownianTree(t1, t0, tol=0.05, shape=x1.shape, key=dw_key)
     terms = MultiTerm(ODETerm(drift), SimplexControlTerm(brownian_motion))
     solver = Euler()
-    sol = diffeqsolve(terms, solver, t1, t0, dt0=-0.1, y0=aitch.clr(x1))
+    sol = diffeqsolve(terms, solver, t1, t0, dt0=-0.1, y0=aitch.clr(x1, axis=-1, keepdims=True))
     return sol.ys[0]
-
-
-
-def sample(logits, tokenizer, key):
-    token_ids = jax.random.categorical(key, logits)
-    return tokenizer.decode(token_ids)
 

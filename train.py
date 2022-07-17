@@ -147,13 +147,13 @@ def main(args):
         for batch in tqdm(data_iterator, total=train_size // batch_size):
             if batch.shape[0] != batch_size:
                 continue
-            key, time_key, sde_key, *local_keys = rng_split(key, 3 + num_local_devices)
-            sde_keys = psplit(jnp.stack(rng_split(sde_key, num_local_devices)))
+            key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
+            sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(texts, num_local_devices)
             times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
             
             noised_texts = forward_noising(texts, times, sde_keys)
-            loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys)))
+            loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             eval_loss.append(loss)
         return jnp.array(eval_loss).mean()
             
@@ -184,8 +184,8 @@ def main(args):
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start, 'forward_sde/time': forward_sde_time}
             i += 1
-            if i % 5 == 0:
-                batch_log['model/gradients'] = grads
+            #if i % 5 == 0:
+            #    batch_log['model/gradients'] = grads
             if i % 50 == 0:
                 val_start = time.time()
                 key, eval_key = rng_split(key)
