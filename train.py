@@ -16,11 +16,7 @@ import wandb
 
 import ssm.aitchison as aitch
 from ssm.data import TokenToProbsProcessor
-from ssm.utils import (
-    psplit,
-    tree_bytes,
-    tree_size
-)
+from ssm.utils import psplit, tree_bytes, tree_size
 from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
 
@@ -149,9 +145,8 @@ def main(args):
                 continue
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
-            texts = psplit(texts, num_local_devices)
+            texts = psplit(batch, num_local_devices)
             times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
-            
             noised_texts = forward_noising(texts, times, sde_keys)
             loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             eval_loss.append(loss)

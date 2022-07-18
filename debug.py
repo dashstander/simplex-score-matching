@@ -2,11 +2,10 @@ import argparse
 from functools import partial
 from flax import jax_utils
 from flax.training import checkpoints
-from flax.training.train_state import TrainState
 from more_itertools import chunked
 import jax
 import jax.numpy as jnp
-import jax.random as jrand
+from jax.random import split as rng_split
 import numpy as np
 from omegaconf import OmegaConf
 import optax
@@ -17,13 +16,9 @@ import wandb
 
 import ssm.aitchison as aitch
 from ssm.data import TokenToProbsProcessor
-from ssm.utils import (
-    psplit,
-    t_to_alpha_sigma,
-    tree_bytes,
-    tree_size
-)
-from ssm.model import TransformerConfig, TransformerDiffusion
+from ssm.utils import psplit, tree_bytes, tree_size
+from ssm.model import create_train_state
+from ssm.sde import dirichlet_forward_sde
 
 
 p = argparse.ArgumentParser()
@@ -41,74 +36,73 @@ def get_dataset(config):
     return data
 
 
-def check_nan_inf(x, name):
-    is_nan = jnp.any(jnp.isnan(x))
-    is_inf = jnp.any(jnp.isinf(x))
-    print(f'{name} has nan: {is_nan}')
-    print(f'{name} has inf: {is_inf}')
+@partial(jax.pmap, axis_name='batch')
+def forward_noising(texts, times, keys):
+    texts = aitch.clr(texts, axis=-1, keepdims=True)
+    texts = texts / jnp.var(texts, axis=-1, keepdims=True)
+    return dirichlet_forward_sde(texts, times, keys)
+
+
+def loss_fn(params, state, xt, t, keys):
+    """
+    $x\in\mathbb{R}^{n}$ is in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.
+    """
+    # v as defined in Sliced Score Matching
+    v = jax.random.normal(keys[0], xt.shape)
+    def score_fn(x):
+        return state.apply_fn({'params': params}, x, t, rngs={'dropout': keys[1]})
+    score, score_grad_dot_v = jax.jvp(
+        score_fn,
+        (xt,),
+        (v,)
+    )
+    print(f'Score inf: {jnp.any(jnp.isinf(score))}')
+    print(f'Score NaN: {jnp.any(jnp.isinf(score))}')
+    print(f'Score grad dot v inf: {jnp.any(jnp.isinf(score_grad_dot_v))}')
+    print(f'score grad dot v NaN: {jnp.any(jnp.isinf(score_grad_dot_v))}')
+
+    score_norm = jnp.power(score, 2).sum()
+    hutchinson_est = jax.vmap(jnp.tensordot)(v, score_grad_dot_v).sum()
+    return 0.5 * score_norm + hutchinson_est
+
+
+# @partial(jax.pmap, axis_name='batch')
+def apply_model(state, noised_texts, t, keys):
+    with jax.disable_jit():
+        loss, grads = jax.value_and_grad(loss_fn)(state.params, state, noised_texts, t, keys)
+    loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
+    return loss, grads
 
 
 @partial(jax.pmap, axis_name='batch')
-def apply_model(state, texts, key):
-    def loss_fn(params, x0, key):
-        """
-        `x` is in $R^{n} in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.$
-        """
-        keys = jrand.split(key, 3)
-        batch_dim, seq_len, simplex_dim = x0.shape
-        t = jrand.uniform(keys[0], (x0.shape[0],))
-        alphas, sigmas = t_to_alpha_sigma(t)
-        alphas, sigmas = jnp.expand_dims(alphas, (1, 2)), jnp.expand_dims(sigmas, (1, 2))
-        # Generate noise
-        raw_noise = jrand.normal(keys[1], (batch_dim, seq_len, simplex_dim))
-        x = aitch.clr(x0, axis=-1, keepdims=True)
-        simplex_scaled_noise = aitch.simplex_metric_tensor_inv(
-            x0,
-            raw_noise
-        )
-        noised_x = alphas * x + sigmas * simplex_scaled_noise
-        targets = alphas * simplex_scaled_noise - sigmas * x
-        v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
-        return jnp.mean((v - targets)**2), v
-    (loss, v), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params, texts, key)
-    #loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
-    return v, loss, grads
+def eval_model(state, noised_texts, t, key):
+    loss = loss_fn(state.params, state, noised_texts, t, key)
+    loss = jax.lax.psum(loss, axis_name='batch')
+    return loss
 
 
 @partial(jax.pmap, axis_name='batch')
 def update_model(state, grads):
     return state.apply_gradients(grads=grads)
-    
 
-def create_train_state(rng, config):
-    init_rng, dropout_rng = jrand.split(rng)
-    transformer_config = TransformerConfig(
-        config.tokenizer.vocab_size,
-        config.model.embed_dim,
-        config.model.model_dim,
-        config.model.mlp_dim,
-        config.model.num_layers,
-        config.model.time_dim,
-        config.model.num_heads,
-        config.data.seq_len,
-        config.model.dropout,
-        config.model.attention_dropout
-    )
+
+def make_optimizer(config):
     opt = optax.chain(
         optax.adamw(config.optimizer.lr),    
         optax.clip(config.optimizer.grad_clip)
     )
-    model = TransformerDiffusion(transformer_config)
-    params = model.init(
-        {'params': init_rng, 'dropout': dropout_rng},
-        jnp.ones([1, config.data.seq_len, config.tokenizer.vocab_size]),
-        jnp.ones((1,))    
-    )['params']
-    return TrainState.create(apply_fn=model.apply, params=params, tx=opt)
+    return opt
 
 
 def main(args):
     config = OmegaConf.load(args.config)
+    wandb.init(
+        project="simplex-score-matching",
+        entity="dstander",
+        config=config,
+        name=args.run_name
+    )
+
     num_local_devices = jax.local_device_count()
     num_processes = jax.process_count()
     local_rank = jax.process_index()
@@ -122,53 +116,96 @@ def main(args):
         [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
     )
     
-    key = jrand.PRNGKey(args.seed)
+    key = jax.random.PRNGKey(args.seed)
     
-    key, state_key = jrand.split(key)
+    key, state_key = rng_split(key)
     epoch = 0
-    train_state = create_train_state(state_key, config)
+    opt = make_optimizer(config)
+    train_state = create_train_state(state_key, config, opt)
     if args.resume:
         train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
 
-    key = jrand.split(key, num_processes)[local_rank]
-
+    key = rng_split(key, num_processes)[local_rank]
     dataset_size = train_data.shape[0]
-
+    val_size = config.data.val_size
+    train_size = dataset_size - val_size
+    batch_size = config.data.batch_size
     if local_rank == 0:
         print(f'Initialized model with {tree_size(train_state.params)} parameters, taking up {tree_bytes(train_state.params)/1e9}GB')
     
-    train_state = jax_utils.replicate(train_state)
+    #train_state = jax_utils.replicate(train_state)
+    
+
+    def do_eval(state, key):
+        indices = jnp.arange(dataset_size - val_size, dataset_size)
+        eval_pool = ray.util.ActorPool(
+            [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
+        )
+        data_iterator = eval_pool.map_unordered(
+            lambda a, v: a.to_probs.remote(v),
+            chunked(indices, batch_size)
+        )
+        eval_loss = []
+        for batch in tqdm(data_iterator, total=train_size // batch_size):
+            if batch.shape[0] != batch_size:
+                continue
+            key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
+            sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
+            texts = psplit(batch, num_local_devices)
+            times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
+            noised_texts = forward_noising(texts, times, sde_keys)
+            loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
+            eval_loss.append(loss)
+        return jnp.array(eval_loss).mean()
+            
     
     def train_epoch(state, indices, num_steps: int, key):
         data_iterator = preproc_pool.map_unordered(
             lambda a, v: a.to_probs.remote(v),
-            chunked(indices, config.data.batch_size)
+            chunked(indices, batch_size)
         )
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
-        for batch in tqdm(data_iterator, total=dataset_size // config.data.batch_size):
-            if batch.shape[0] != config.data.batch_size:
+        
+        for batch in tqdm(data_iterator, total=train_size // batch_size):
+            if batch.shape[0] != batch_size:
                 continue
             batch_start = time.time()
-            key, *local_keys = jax.random.split(key, 1 + num_local_devices)
-            texts = psplit(batch, num_local_devices)
-            v, loss, grads = apply_model(state, texts, jnp.stack(local_keys))
-            check_nan_inf(v, 'v')
-            check_nan_inf(loss, 'loss')
-            check_nan_inf(jax.tree_util.tree_leaves(grads), 'grads')
+            key, time_key, sde_key, *local_keys = rng_split(key, 3 + 2)
+            sde_keys = jnp.stack(rng_split(sde_key, batch_size))
+            
+            times = jax.random.uniform(time_key, (batch_size,))
+            noised_texts = forward_noising(batch, times, sde_keys)
+            print(f'Texts inf: {jnp.any(jnp.isinf(noised_texts))}')
+            print(f'Texts NaN: {jnp.any(jnp.isinf(noised_texts))}')
+            forward_sde_time = time.time() - batch_start
+            with jax.disable_jit():
+                loss, grads = apply_model(state, noised_texts, times, jnp.stack(local_keys))
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)
             epoch_losses.append(single_loss)
-            batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
+            batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start, 'forward_sde/time': forward_sde_time}
+            i += 1
+            #if i % 5 == 0:
+            #    batch_log['model/gradients'] = grads
+            if i % 50 == 0:
+                val_start = time.time()
+                key, eval_key = rng_split(key)
+                val_loss = do_eval(state, eval_key)
+                val_time = time.time() - val_start
+                batch_log.update({
+                    'val/loss': val_loss,
+                    'val/time': val_time
+                })
+                if jax.process_index() == 0:
+                    tqdm.write(f'Batch {i}, loss {single_loss:g}, val loss {val_loss:g}')
+                    checkpoints.save_checkpoint(args.checkpoint_dir, state, i)
             if jax.process_index() == 0:
                 wandb.log(batch_log)
             del batch_log
-            i += 1
-            if i % 50 == 0 and jax.process_index() == 0:
-                tqdm.write(f'Batch {i}, loss {single_loss:g}')
-                checkpoints.save_checkpoint(args.checkpoint_dir, state, i)
+
         epoch_loss = np.mean(epoch_losses)
         epoch_time = time.time() - epoch_start
         if jax.process_index() == 0:
@@ -179,8 +216,8 @@ def main(args):
         num_steps = 0
         for epoch in trange(config.data.epochs):
             tqdm.write(f'Epoch {epoch}')
-            key, index_key, *subkeys = jrand.split(key, 3)
-            permuted_indices = jrand.permutation(index_key, dataset_size).tolist()
+            key, index_key, *subkeys = rng_split(key, 3)
+            permuted_indices = jax.random.permutation(index_key, train_size).tolist()
             train_state, num_steps = train_epoch(train_state, permuted_indices, num_steps, subkeys[0])
             if jax.process_index() == 0:
                 checkpoints.save_checkpoint(args.checkpoint_dir, jax_utils.unreplicate(train_state), epoch, prefix='epoch_')
