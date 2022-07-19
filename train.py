@@ -174,8 +174,8 @@ def main(args):
             single_loss = jax_utils.unreplicate(loss)
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start, 'forward_sde/time': forward_sde_time}
-            #if i % 5 == 0:
-            #    batch_log['model/gradients'] = grads
+            if i % 5 == 0:
+                batch_log['model/gradients'] = grads.unfreeze()
             if i % 100 == 0 and i > 0:
                 val_start = time.time()
                 key, eval_key = rng_split(key)
