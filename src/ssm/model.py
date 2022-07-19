@@ -163,7 +163,9 @@ class TransformerDiffusion(nn.Module):
             TransformerLayer(self.config) for _ in range(self.config.num_layers)
         ])(x, None, deterministic=deterministic)        
         x = x + jnp.sqrt(2) * trans_x
-        x_final = nn.Dense(self.config.vocab_size)(x)
+        x = nn.Dense(self.config.vocab_size)(x)
+        x_final = x - jnp.mean(x, axis=-1, keepdims=True)
+        x_final = x_final / jnp.var(x_final, axis=-1, keepdims=True)
         return x_final
 
 
@@ -180,7 +182,7 @@ def create_train_state(rng, config, optimizer):
         config.data.seq_len,
         config.model.dropout,
         config.model.attention_dropout
-        
+
     )
 
     model = TransformerDiffusion(transformer_config)

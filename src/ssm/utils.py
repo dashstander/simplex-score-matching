@@ -1,4 +1,5 @@
 import chex
+from functools import partial
 import jax
 import jax.numpy as jnp
 import jax.random as jrand
@@ -87,6 +88,11 @@ def tokens_to_probs(rng, token_ids, concentration=0.9, vocab_size=8192):
         return x / x.sum(axis=1)[:, None]
     return np.apply_along_axis(_tokens_to_probs, axis=1, arr=token_ids)
 
+
+
+@partial(jax.pmap, in_axes=(0, 0, None))
+def ema_update(params, averaged_params, decay):
+    return jax.tree_map(lambda p, a: p * (1 - decay) + a * decay, params, averaged_params)
 
 
 def probs_to_tokens(key, tokenizer, token_probs: chex.Array):

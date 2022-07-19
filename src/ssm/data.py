@@ -2,9 +2,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import jax
 import jax.numpy as jnp
-import ray
 from ray.data.datasource import DefaultFileMetadataProvider
 from ray.data.read_api import read_datasource
+from torch.utils.data import Dataset, get_worker_info
 
 
 
@@ -15,19 +15,24 @@ def sample(logits, tokenizer, key):
 
 
 
-@ray.remote
-class TokenToProbsProcessor:
+class TokenProbsDataset(Dataset):
 
-    def __init__(self, seed, config, data):
-        self.rng = np.random.default_rng(seed)
+    def __init__(self, config, data):
+        self.rng = np.random.default_rng(get_worker_info().seed)
         self.min_conc = config.data.min_init_prob_concentration
         self.max_conc = config.data.max_init_prob_concentration
         self.vocab_size = config.tokenizer.vocab_size
         self.data = data
-
-    def to_probs(self, indices):
-        tokens = self.data[indices, :]
-        _, seq_len, = tokens.shape
+        self.length = None
+    
+    def __len__(self):
+        if self.length is None:
+            self.length = self.data.shape[0]
+        return self.length
+    
+    def __getitem__(self, idx):
+        tokens = self.data[idx, :]
+        seq_len = tokens.shape[0]
 
         def _tokens_to_probs(token_ids):
             concentration = self.rng.uniform(self.min_conc, self.max_conc)
@@ -42,7 +47,11 @@ class TokenToProbsProcessor:
             np.put_along_axis(x, token_ids[:, None], conc_val, axis=1)
             return x / x.sum(axis=1)[:, None]
 
-        return np.apply_along_axis(_tokens_to_probs, axis=1, arr=tokens)
+        return np.apply_along_axis(_tokens_to_probs, axis=0, arr=tokens)
+        
+
+
+
 
 
 

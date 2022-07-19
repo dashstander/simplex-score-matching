@@ -32,13 +32,14 @@ model:
     time_dim: 16
     dropout: 0.1
     attention_dropout: 0.1
+    ema_decay: 0.999
 
 optimizer:
     algo: AdamW
-    init_lr: 0.00000002
-    peak_lr: 0.1
+    init_lr: 0.0000002
+    peak_lr: 0.0006
     lr: 0.0003
-    warmup_steps: 1000
-    decay_steps: 10000
-    grad_accum: 8
+    warmup_steps: 500
+    decay_steps: 50000
+    grad_accum: -1
     grad_clip: 2.0
