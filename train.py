@@ -103,6 +103,9 @@ def main(args):
     )
 
     checkpoint_dir = Path(args.checkpoint_dir)
+    (checkpoint_dir / 'train').mkdir(exist_ok=True, parents=True)
+    (checkpoint_dir / 'ema').mkdir(exist_ok=True, parents=True)
+
 
     num_local_devices = jax.local_device_count()
     num_processes = jax.process_count()
@@ -122,6 +125,7 @@ def main(args):
     if args.resume:
         train_state = checkpoints.restore_checkpoint(checkpoint_dir / 'train', train_state)
         ema_params = checkpoints.restore_checkpoint(checkpoint_dir / 'ema', ema_params)
+    
 
     key = rng_split(key, num_processes)[local_rank]
     
