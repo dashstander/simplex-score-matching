@@ -48,10 +48,6 @@ def reverse_drift(model_fn, t, x, args):
     return drift - jnp.matmul(j_sfm, score)
 
 
-
-
-
-
 @jax.vmap
 def dirichlet_forward_sde(x0, t1, key):
     """ The forward noising SDE that converges to Dir([1, 1, ...., 1]) (i.e. uniform on the simplex)
@@ -59,8 +55,8 @@ def dirichlet_forward_sde(x0, t1, key):
     t0 = 0
     brownian_motion = VirtualBrownianTree(t0, t1, tol=0.05, shape=x0.shape, key=key)
     terms = MultiTerm(ODETerm(drift_potential), SimplexControlTerm(lambda t, y, args: y, brownian_motion))
-    solver = Euler()
-    sol = diffeqsolve(terms, solver, t0, t1, dt0=0.1, y0=aitch.clr(x0, axis=-1, keepdims=True))
+    solver = Euler() 
+    sol = diffeqsolve(terms, solver, t0, t1, dt0=0.1, y0=x0)
     return sol.ys[0]
 
 

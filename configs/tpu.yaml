@@ -7,6 +7,7 @@ data:
     epochs: 20
     dataset_path: "/home/dashiell/wiki_tokens_512.npy"
     batch_size: 64
+    eval_batch_size: 32
     seq_len: 512
     val_size: 2048
     min_init_prob_concentration: 0.05
@@ -34,5 +35,10 @@ model:
 
 optimizer:
     algo: AdamW
-    lr: 0.001
+    init_lr: 0.00000002
+    peak_lr: 0.1
+    lr: 0.0003
+    warmup_steps: 1000
+    decay_steps: 10000
+    grad_accum: 8
     grad_clip: 2.0

@@ -180,6 +180,7 @@ def create_train_state(rng, config, optimizer):
         config.data.seq_len,
         config.model.dropout,
         config.model.attention_dropout
+        
     )
 
     model = TransformerDiffusion(transformer_config)

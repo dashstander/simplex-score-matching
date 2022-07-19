@@ -8,6 +8,7 @@ matplotlib
 omegaconf
 optax
 pytest
+pytorch
 seaborn
 tensorflow
 transformers

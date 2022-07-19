@@ -34,5 +34,10 @@ model:
 
 optimizer:
     algo: AdamW
-    lr: 0.001
+    init_lr: 0.00000002
+    peak_lr: 0.1
+    lr: 0.0003
+    warmup_steps: 1000
+    decay_steps: 10000
+    grad_accum: 8
     grad_clip: 2.0

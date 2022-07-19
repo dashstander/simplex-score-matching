@@ -55,7 +55,7 @@ def loss_fn(params, state, xt, t, keys):
         score_fn,
         (xt,),
         (v,)
-    ) 
+    )
     score_norm = jnp.power(score, 2).sum()
     hutchinson_est = jax.vmap(jnp.tensordot)(v, score_grad_dot_v).sum()
     return 0.5 * score_norm + hutchinson_est
@@ -81,11 +81,22 @@ def update_model(state, grads):
 
 
 def make_optimizer(config):
-    opt = optax.chain(
-        optax.adamw(config.optimizer.lr),    
-        optax.clip(config.optimizer.grad_clip)
+    schedule = optax.warmup_cosine_decay_schedule(
+        init_value=config.optimizer.init_lr,
+        peak_value=config.optimizer.peak_lr,
+        warmup_steps=config.optimizer.warmup_steps,
+        decay_steps=config.optimizer.decay_steps + config.optimizer.warmup_steps,
+        end_value=config.optimizer.lr,
     )
-    return opt
+    base_opt = optax.chain(
+        optax.clip(config.optimizer.grad_clip),
+        optax.adamw(lr=schedule)
+    )
+    if config.optimizer.grad_accum <= 1:
+        return base_opt
+    else:
+        opt = optax.MultiSteps(opt, every_k_schedule=config.optimizer.grad_accum)
+        return opt
 
 
 def main(args):
@@ -135,18 +146,19 @@ def main(args):
         eval_pool = ray.util.ActorPool(
             [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
         )
+        eval_batch = batch_size // 2
         data_iterator = eval_pool.map_unordered(
             lambda a, v: a.to_probs.remote(v),
-            chunked(indices, batch_size)
+            chunked(indices, eval_batch)
         )
         eval_loss = []
-        for batch in tqdm(data_iterator, total=train_size // batch_size):
-            if batch.shape[0] != batch_size:
+        for batch in tqdm(data_iterator, total=val_size // eval_batch):
+            if batch.shape[0] != eval_batch:
                 continue
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
-            sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
+            sde_keys = psplit(jnp.stack(rng_split(sde_key, eval_batch)), num_local_devices)
             texts = psplit(batch, num_local_devices)
-            times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
+            times = psplit(jax.random.uniform(time_key, (eval_batch,)), num_local_devices)
             noised_texts = forward_noising(texts, times, sde_keys)
             loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             eval_loss.append(loss)
@@ -169,10 +181,14 @@ def main(args):
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(batch, num_local_devices)
-            times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
+            times = psplit(
+                jax.random.uniform(time_key, (batch_size,), minval=config.sde.start_time, maxval=config.sde.end_time), num_local_devices)
             noised_texts = forward_noising(texts, times, sde_keys)
             forward_sde_time = time.time() - batch_start
+            times = times / config.sde.end_time
             loss, grads = apply_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
+            if loss < 0:
+                print()
             state = update_model(state, grads)
             batch_end = time.time()
             single_loss = jax_utils.unreplicate(loss)
@@ -181,7 +197,7 @@ def main(args):
             i += 1
             #if i % 5 == 0:
             #    batch_log['model/gradients'] = grads
-            if i % 50 == 0:
+            if i % 200 == 0:
                 val_start = time.time()
                 key, eval_key = rng_split(key)
                 val_loss = do_eval(state, eval_key)
