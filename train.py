@@ -41,6 +41,13 @@ def get_datasets(config):
     return train_data, val_data
 
 
+def save(state, ema_params, dir, index):
+    if jax.process_index() == 0:
+        checkpoints.save_checkpoint(dir / 'train', jax_utils.unreplicate(state), index)
+        checkpoints.save_checkpoint(dir / 'ema', jax_utils.unreplicate(ema_params), index)
+
+
+
 @partial(jax.pmap, axis_name='batch')
 def forward_noising(texts, times, keys):
     texts = aitch.clr(texts, axis=-1, keepdims=True)
@@ -178,6 +185,7 @@ def main(args):
                     'val/loss': val_loss,
                     'val/time': val_time
                 })
+                save(state, ema_params, checkpoint_dir, i)
                 if jax.process_index() == 0:
                     tqdm.write(f'Batch {i}, loss {single_loss:g}, val loss {val_loss:g}')
                     checkpoints.save_checkpoint(checkpoint_dir / 'train', jax_utils.unreplicate(state), i)
@@ -198,11 +206,8 @@ def main(args):
         num_steps = 0
         for epoch in trange(config.data.epochs):
             tqdm.write(f'Epoch {epoch}')
-            key, index_key, *subkeys = rng_split(key, 3)
-            train_state, ema_params, num_steps = train_epoch(train_state, ema_params, num_steps, subkeys[0])
-            if jax.process_index() == 0:
-                checkpoints.save_checkpoint(checkpoint_dir / 'train', jax_utils.unreplicate(train_state), epoch, prefix='train_state_epoch_')
-                checkpoints.save_checkpoint(checkpoint_dir / 'ema', jax_utils.unreplicate(ema_params), epoch, prefix='train_state_epoch_')
+            key, subkey = rng_split(key)
+            train_state, ema_params, num_steps = train_epoch(train_state, ema_params, num_steps, subkey)
 
     except KeyboardInterrupt:
         pass
