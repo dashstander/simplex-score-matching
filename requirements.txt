@@ -9,7 +9,6 @@ omegaconf
 optax
 pytest
 torch
-ray
 seaborn
 tensorflow
 transformers
