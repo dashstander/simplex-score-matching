@@ -9,13 +9,13 @@ import numpy as np
 from omegaconf import OmegaConf
 import optax
 from pathlib import Path
-from torch.utils.data import DataLoader
+import tensorflow as tf
 import time
 from tqdm import tqdm, trange
 import wandb
 
 import ssm.aitchison as aitch
-from ssm.data import TokenProbsDataset
+from ssm.data import TokenToProbTransformer
 from ssm.loss import sliced_score_matching
 from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
@@ -34,10 +34,37 @@ p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 
 
 
-def get_datasets(config):
+def get_datasets(config, seed):
+    prob_transformer = TokenToProbTransformer(seed, config)
     data = np.lib.format.open_memmap(config.data.dataset_path, mode='r')
-    train_data = TokenProbsDataset(config, data[:-config.data.eval_size, :])
-    val_data = TokenProbsDataset(config, data[-config.data.eval_size:, :])
+    train_data = tf.data.Dataset.from_tensor_slices(data[:-config.data.val_size, :])
+    val_data = tf.data.Dataset.from_tensor_slices(data[-config.data.val_size:, :])
+    train_data = (
+        train_data
+        .shuffle(10_000)
+        .batch(config.data.batch_size)
+        .map(
+            lambda x: tf.numpy_function(
+                func=prob_transformer, inp=[x],
+                Tout=np.float32
+            ),
+            num_parallel_calls=8
+        )
+        .prefetch(4)
+    )
+    val_data = (
+        val_data
+        .batch(config.data.batch_size)
+        .map(
+            lambda x: tf.numpy_function(
+                func=prob_transformer,
+                inp=[x],
+                Tout=np.float32
+            ), 
+            num_parallel_calls=8
+        )
+        .prefetch(4)
+    )
     return train_data, val_data
 
 
@@ -137,9 +164,8 @@ def main(args):
     
 
     def do_eval(state, key):
-        data = DataLoader(val_data, batch_size=batch_size, drop_last=True, shuffle=True, num_workers=4)
         eval_loss = []
-        for batch in tqdm(data):
+        for batch in tqdm(val_data.as_numpy_iterator()):
             if batch.shape[0] != batch_size:
                 continue
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
@@ -156,8 +182,7 @@ def main(args):
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
-        data = DataLoader(train_data, batch_size=batch_size, drop_last=True, shuffle=True, num_workers=4)
-        for batch in tqdm(data):
+        for batch in tqdm(train_data.as_numpy_iterator()):
             if batch.shape[0] != batch_size:
                 continue
             batch_start = time.time()
