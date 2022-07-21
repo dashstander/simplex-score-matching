@@ -1,4 +1,5 @@
 import argparse
+import copy
 from functools import partial
 from flax import jax_utils
 from flax.training import checkpoints
@@ -8,6 +9,7 @@ from jax.random import split as rng_split
 import numpy as np
 from omegaconf import OmegaConf
 import optax
+import os
 from pathlib import Path
 import tensorflow as tf
 import time
@@ -21,6 +23,9 @@ from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
 
+
+# ~17GB
+os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
 
 
 p = argparse.ArgumentParser()
@@ -42,7 +47,7 @@ def get_datasets(config, seed):
     train_data = (
         train_data
         .shuffle(10_000)
-        .batch(config.data.batch_size)
+        .batch(config.data.batch_size, drop_remainder=True)
         .map(
             lambda x: tf.numpy_function(
                 func=prob_transformer, inp=[x],
@@ -54,7 +59,7 @@ def get_datasets(config, seed):
     )
     val_data = (
         val_data
-        .batch(config.data.batch_size)
+        .batch(config.data.batch_size, drop_remainder=True)
         .map(
             lambda x: tf.numpy_function(
                 func=prob_transformer,
@@ -63,9 +68,9 @@ def get_datasets(config, seed):
             ), 
             num_parallel_calls=8
         )
-        .prefetch(4)
+        .prefetch(2)
     )
-    return train_data, val_data
+    return train_data, val_data, data[:-config.data.val_size, :].shape[0]
 
 
 def save(state, ema_params, dir, index):
@@ -140,7 +145,7 @@ def main(args):
 
     print(f'Beginning training with {num_local_devices} devices.')
 
-    train_data, val_data = get_datasets(config)
+    train_data, val_data, train_size = get_datasets(config, args.seed)
     
     key = jax.random.PRNGKey(args.seed)
     
@@ -148,7 +153,7 @@ def main(args):
     epoch = 0
     opt = make_optimizer(config)
     train_state = create_train_state(state_key, config, opt)
-    ema_params = jax.utils.replicate(train_state.params)
+    ema_params = copy.deepcopy(train_state.params)
     if args.resume:
         train_state = checkpoints.restore_checkpoint(checkpoint_dir / 'train', train_state)
         ema_params = checkpoints.restore_checkpoint(checkpoint_dir / 'ema', ema_params)
@@ -159,15 +164,13 @@ def main(args):
     batch_size = config.data.batch_size
     if local_rank == 0:
         print(f'Initialized model with {tree_size(train_state.params)} parameters, taking up {tree_bytes(train_state.params)/1e9}GB')
-    ema_params = jax.utils.replicate(ema_params)
+    ema_params = jax_utils.replicate(ema_params)
     train_state = jax_utils.replicate(train_state)
     
 
     def do_eval(state, key):
         eval_loss = []
         for batch in tqdm(val_data.as_numpy_iterator()):
-            if batch.shape[0] != batch_size:
-                continue
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(batch, num_local_devices)
@@ -175,14 +178,14 @@ def main(args):
             noised_texts = forward_noising(texts, times, sde_keys)
             loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             eval_loss.append(loss)
-        return jnp.array(eval_loss).mean()
+        return jnp.array(eval_loss).sum()
             
     
     def train_epoch(state, ema_params, num_steps: int, key):
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
-        for batch in tqdm(train_data.as_numpy_iterator()):
+        for batch in tqdm(train_data.as_numpy_iterator(), total=train_size // batch_size):
             if batch.shape[0] != batch_size:
                 continue
             batch_start = time.time()
@@ -204,8 +207,12 @@ def main(args):
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start, 'forward_sde/time': forward_sde_time}
             if i % 5 == 0:
-                batch_log['model/gradients'] = grads.unfreeze()
+                batch_log['model/gradients'] = jax.tree_util.tree_map(wandb.Histogram, grads.unfreeze())
             if i % 100 == 0 and i > 0:
+                del noised_texts
+                del grads
+                del batch
+                del texts
                 val_start = time.time()
                 key, eval_key = rng_split(key)
                 val_loss = do_eval(state, eval_key)
@@ -215,11 +222,6 @@ def main(args):
                     'val/time': val_time
                 })
                 save(state, ema_params, checkpoint_dir, i)
-                if jax.process_index() == 0:
-                    tqdm.write(f'Batch {i}, loss {single_loss:g}, val loss {val_loss:g}')
-                    checkpoints.save_checkpoint(checkpoint_dir / 'train', jax_utils.unreplicate(state), i)
-                    checkpoints.save_checkpoint(checkpoint_dir / 'ema', jax_utils.unreplicate(ema_params), i)
-
             if jax.process_index() == 0:
                 wandb.log(batch_log)
             del batch_log
