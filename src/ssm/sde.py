@@ -45,7 +45,7 @@ def reverse_drift(model_fn, t, x, args):
     drift = drift_potential(t, x, {})
     score = model_fn(x, t)
     j_sfm = softmax_jac_squared(x)
-    return drift - jnp.matmul(j_sfm, score)
+    return drift - (0.5 * jnp.matmul(j_sfm, score))
 
 
 @jax.vmap
