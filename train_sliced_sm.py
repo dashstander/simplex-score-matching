@@ -18,7 +18,7 @@ import wandb
 
 import ssm.aitchison as aitch
 from ssm.data import TokenToProbTransformer
-from ssm.loss import kl_denoising
+from ssm.loss import sliced_score_matching
 from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
@@ -88,15 +88,15 @@ def forward_noising(texts, times, keys):
 
 
 @partial(jax.pmap, axis_name='batch')
-def apply_model(state, texts, noised_texts, t, keys):
-    loss, grads = jax.value_and_grad(kl_denoising)(state.params, state, texts, noised_texts, t, keys)
+def apply_model(state, noised_texts, t, keys):
+    loss, grads = jax.value_and_grad(sliced_score_matching)(state.params, state, noised_texts, t, keys)
     loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
     return loss, grads
 
 
 @partial(jax.pmap, axis_name='batch')
-def eval_model(state, texts, noised_texts, t, key):
-    loss = kl_denoising(state.params, state, texts, noised_texts, t, key)
+def eval_model(state, noised_texts, t, key):
+    loss = sliced_score_matching(state.params, state, noised_texts, t, key)
     loss = jax.lax.psum(loss, axis_name='batch')
     return loss
 
@@ -176,7 +176,7 @@ def main(args):
             texts = psplit(batch, num_local_devices)
             times = psplit(jax.random.uniform(time_key, (batch_size,)), num_local_devices)
             noised_texts = forward_noising(texts, times, sde_keys)
-            loss = eval_model(state, texts, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
+            loss = eval_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             eval_loss.append(loss)
         return jnp.array(eval_loss).sum()
             
@@ -197,7 +197,7 @@ def main(args):
             noised_texts = forward_noising(texts, times, sde_keys)
             forward_sde_time = time.time() - batch_start
             times = times / config.sde.end_time
-            loss, grads = apply_model(state, texts, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
+            loss, grads = apply_model(state, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
             if jnp.any(loss) < 0:
                 print(f'Negative loss, what the fuck? {jax_utils.unreplicate(loss)}')
             state = update_model(state, grads)

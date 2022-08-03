@@ -1,8 +1,12 @@
 import jax
+from jax.nn import softmax
 import jax.numpy as jnp
-
 import ssm.aitchison as aitch
 from ssm.utils import t_to_alpha_sigma
+
+
+def kl(p, q, eps: float = 2 ** -16):
+    return p.dot(jnp.log(p + eps) - jnp.log(q + eps))
 
 
 def sliced_score_matching(params, state, xt, t, keys):
@@ -34,7 +38,7 @@ def v_denoising(params, state, x0, key):
     """
     keys = jax.random.split(key, 3)
     batch_dim, seq_len, simplex_dim = x0.shape
-    t = jax.random.uniform(keys[0], (x0.shape[0],))
+    t = jax.random.uniform(keys[0], (batch_dim,))
     alphas, sigmas = t_to_alpha_sigma(t)
     alphas, sigmas = jnp.expand_dims(alphas, (1, 2)), jnp.expand_dims(sigmas, (1, 2))
     # Generate noise
@@ -48,3 +52,13 @@ def v_denoising(params, state, x0, key):
     targets = alphas * simplex_scaled_noise - sigmas * x
     v = state.apply_fn({'params': params}, noised_x, t, rngs={'dropout': keys[3]})
     return jnp.mean((v - targets)**2)
+
+
+def kl_denoising(params, state, x0, xt, key):
+    keys = jax.random.split(key, 3)
+    batch_dim, seq_len, simplex_dim = x0.shape
+    t = jax.random.uniform(keys[0], (batch_dim,))
+    score = state.apply({'params': params},  xt, t, rngs={'dropout': keys[0]})
+    score_norm = jnp.power(score, 2).sum()
+    kl_div = kl(softmax(x0), softmax(score))
+    return kl_div + score_norm
