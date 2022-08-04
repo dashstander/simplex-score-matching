@@ -8,11 +8,9 @@ from tensorflow.io import gfile
 import tensorflow as tf
 
 
-
 def sample(logits, tokenizer, key):
     token_ids = jax.random.categorical(key, logits)
     return tokenizer.decode(token_ids)
-
 
 
 class TokenToProbTransformer:
@@ -28,6 +26,7 @@ class TokenToProbTransformer:
 
         def _tokens_to_probs(token_ids):
             concentration = self.rng.uniform(self.min_conc, self.max_conc)
+            # TODO: Actually just use (n-1)-dim Dirichlet samples
             x = self.rng.random((seq_len, self.vocab_size)) / self.vocab_size
             # At this point E(x.sum()) == 0.5 
             # What we want is for new_val / (x.sum() + new_val) ~ concentration
@@ -40,7 +39,6 @@ class TokenToProbTransformer:
             return (x / x.sum(axis=1)[:, None]).astype(np.float32)
 
         return np.apply_along_axis(_tokens_to_probs, axis=1, arr=tokens)
-
 
 
 
@@ -62,7 +60,6 @@ def load_tokens(fp):
     with gfile.GFile(fp, mode='rb') as fp:
         data = np.load(fp)
     return tf.data.Dataset.from_tensor_slices(data)
-
 
 
 def get_datasets(config, seed):
@@ -112,3 +109,4 @@ def dataloader(path, batch_size, random_seed):
             for batch in np.split(data, splits):
                 if batch.shape[0] == batch_size:
                     yield jnp.asarray(batch)
+

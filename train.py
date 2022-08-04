@@ -17,7 +17,7 @@ from tqdm import tqdm, trange
 import wandb
 
 import ssm.aitchison as aitch
-from ssm.data import TokenToProbTransformer
+from ssm.data import get_datasets
 from ssm.loss import jsd_denoising
 from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
@@ -36,41 +36,6 @@ p.add_argument('--seed', type=int, default=0,
                    help='the random seed')
 p.add_argument('--run-name', type=str, default='SSM Diffusion')
 p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
-
-
-
-def get_datasets(config, seed):
-    prob_transformer = TokenToProbTransformer(seed, config)
-    data = np.lib.format.open_memmap(config.data.dataset_path, mode='r')
-    train_data = tf.data.Dataset.from_tensor_slices(data[:-config.data.val_size, :])
-    val_data = tf.data.Dataset.from_tensor_slices(data[-config.data.val_size:, :])
-    train_data = (
-        train_data
-        .shuffle(10_000)
-        .batch(config.data.batch_size, drop_remainder=True)
-        .map(
-            lambda x: tf.numpy_function(
-                func=prob_transformer, inp=[x],
-                Tout=np.float32
-            ),
-            num_parallel_calls=8
-        )
-        .prefetch(4)
-    )
-    val_data = (
-        val_data
-        .batch(config.data.batch_size, drop_remainder=True)
-        .map(
-            lambda x: tf.numpy_function(
-                func=prob_transformer,
-                inp=[x],
-                Tout=np.float32
-            ), 
-            num_parallel_calls=8
-        )
-        .prefetch(2)
-    )
-    return train_data, val_data, data[:-config.data.val_size, :].shape[0]
 
 
 def save(state, ema_params, dir, index):
@@ -104,6 +69,11 @@ def eval_model(state, texts, noised_texts, t, key):
 @partial(jax.pmap, axis_name='batch')
 def update_model(state, grads):
     return state.apply_gradients(grads=grads)
+
+
+def demo():
+    # TODO: Use sampling code to periodically generate text samples
+    pass
 
 
 def make_optimizer(config):
@@ -145,7 +115,7 @@ def main(args):
 
     print(f'Beginning training with {num_local_devices} devices.')
 
-    train_data, val_data, train_size = get_datasets(config, args.seed)
+    train_data, val_data = get_datasets(config, args.seed)
     
     key = jax.random.PRNGKey(args.seed)
     
@@ -185,21 +155,23 @@ def main(args):
         epoch_start = time.time()
         epoch_losses = []
         i = num_steps
-        for batch in tqdm(train_data.as_numpy_iterator(), total=train_size // batch_size):
-            if batch.shape[0] != batch_size:
-                continue
+        for batch in tqdm(train_data.as_numpy_iterator()):
             batch_start = time.time()
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(batch, num_local_devices)
             times = psplit(
-                jax.random.uniform(time_key, (batch_size,), minval=config.sde.start_time, maxval=config.sde.end_time), num_local_devices)
+                jax.random.uniform(
+                    time_key,
+                    (batch_size,),
+                    minval=config.sde.start_time,
+                    maxval=config.sde.end_time),
+                num_local_devices
+            )
             noised_texts = forward_noising(texts, times, sde_keys)
             forward_sde_time = time.time() - batch_start
             times = times / config.sde.end_time
             loss, grads = apply_model(state, texts, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))
-            if jnp.any(loss) < 0:
-                print(f'Negative loss, what the fuck? {jax_utils.unreplicate(loss)}')
             state = update_model(state, grads)
             ema_params = ema_update(state.params, ema_params, config.model.ema_decay)
             batch_end = time.time()
