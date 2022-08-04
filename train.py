@@ -18,7 +18,7 @@ import wandb
 
 import ssm.aitchison as aitch
 from ssm.data import TokenToProbTransformer
-from ssm.loss import kl_denoising
+from ssm.loss import jsd_denoising
 from ssm.model import create_train_state
 from ssm.sde import dirichlet_forward_sde
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
@@ -89,14 +89,14 @@ def forward_noising(texts, times, keys):
 
 @partial(jax.pmap, axis_name='batch')
 def apply_model(state, texts, noised_texts, t, keys):
-    loss, grads = jax.value_and_grad(kl_denoising)(state.params, state, texts, noised_texts, t, keys)
+    loss, grads = jax.value_and_grad(jsd_denoising)(state.params, state, texts, noised_texts, t, keys)
     loss, grads = jax.lax.psum(loss, axis_name='batch'), jax.lax.psum(grads, axis_name='batch')
     return loss, grads
 
 
 @partial(jax.pmap, axis_name='batch')
 def eval_model(state, texts, noised_texts, t, key):
-    loss = kl_denoising(state.params, state, texts, noised_texts, t, key)
+    loss = jsd_denoising(state.params, state, texts, noised_texts, t, key)
     loss = jax.lax.psum(loss, axis_name='batch')
     return loss
 

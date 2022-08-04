@@ -2,6 +2,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import jax
 import jax.numpy as jnp
+import random
+from tensorflow.data import Dataset
+from tensorflow.io import gfile
+import tensorflow as tf
 
 
 
@@ -55,8 +59,45 @@ def tokenize_and_split(tokenizer, seq_len, batch):
 
 
 def load_tokens(fp):
-    data = np.load(fp)
-    return data
+    with gfile.GFile(fp, mode='rb') as fp:
+        data = np.load(fp)
+    return tf.data.Dataset.from_tensor_slices(data)
+
+
+
+def get_datasets(config, seed):
+    random.seed(seed)
+    train_data = tf.data.Dataset.list_files(f'{config.data.dataset_path}/train/*.npy', shuffle=True)
+    val_data= tf.data.Dataset.list_files(f'{config.data.dataset_path}/val/*.npy')
+    prob_transformer = TokenToProbTransformer(seed, config)
+    train_data = (
+        train_data
+        .interleave(load_tokens, cycle_length=10, num_parallel_calls=5)
+        .shuffle(10_000)
+        .batch(config.data.batch_size, drop_remainder=True)
+        .map(
+            lambda x: tf.numpy_function(
+                func=prob_transformer, inp=[x],
+                Tout=np.float32
+            ),
+            num_parallel_calls=8
+        )
+        .prefetch(4)
+    )
+    val_data = (
+        val_data
+        .batch(config.data.batch_size, drop_remainder=True)
+        .map(
+            lambda x: tf.numpy_function(
+                func=prob_transformer,
+                inp=[x],
+                Tout=np.float32
+            ), 
+            num_parallel_calls=8
+        )
+        .prefetch(2)
+    )
+    return train_data, val_data
 
 
 def dataloader(path, batch_size, random_seed):
@@ -71,4 +112,3 @@ def dataloader(path, batch_size, random_seed):
             for batch in np.split(data, splits):
                 if batch.shape[0] == batch_size:
                     yield jnp.asarray(batch)
-

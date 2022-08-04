@@ -36,16 +36,25 @@ def drift_potential(t, x, args):
     )
 
 
+softmax_jac = jax.jacrev(jax.nn.softmax)
+softmax_jvp = jax.vmap(
+    lambda p, t: jax.jvp(jax.nn.softmax, (p,), (t,))[1],
+    in_axes=(None, 0)
+)
+
+
+@jax.vmap
 def softmax_jac_squared(x):
-    _jvp = lambda s: jax.jvp(jax.nn.softmax, (x,), (s,))[1]
-    return jax.vmap(_jvp)(jax.jacrev(jax.nn.softmax)(x))
+    return softmax_jvp(x, softmax_jac(x))
 
 
 def reverse_drift(model_fn, t, x, args):
     drift = drift_potential(t, x, {})
-    score = model_fn(x, t)
+    score = jnp.squeeze(model_fn(x, t))
     j_sfm = softmax_jac_squared(x)
-    return drift - (0.5 * jnp.matmul(j_sfm, score))
+    #print(j_sfm.shape)
+    #print(score.shape)
+    return drift - (0.5 * jnp.einsum('sij,si->sj', j_sfm, score))
 
 
 @jax.vmap
