@@ -1,0 +1,45 @@
+description: "Small model to test, runs on a v2-8 TPU"
+
+gcs:
+  project: simplex-score-matching
+
+data:
+    epochs: 20
+    dataset_path: "gs://simplex-text-data-01/simplex-text-data/train/wiki"
+    batch_size: 64
+    eval_batch_size: 32
+    seq_len: 512
+    val_size: 2048
+    min_init_prob_concentration: 0.2
+    max_init_prob_concentration: 0.9
+
+tokenizer:
+    path: "tokenizer/tokenizer-wiki8192.json"
+    vocab_size: 8192
+  
+sde:
+  start_time: 0
+  end_time: 10
+
+model:
+    type: transformer
+    num_layers: 3
+    num_heads: 8
+    embed_dim: 512
+    init_dim: 512
+    model_dim: 512
+    mlp_dim: 2048
+    time_dim: 16
+    dropout: 0.1
+    attention_dropout: 0.1
+    ema_decay: 0.999
+
+optimizer:
+    algo: AdamW
+    init_lr: 0.0000002
+    peak_lr: 0.0006
+    lr: 0.0003
+    warmup_steps: 500
+    decay_steps: 50000
+    grad_accum: -1
+    grad_clip: 2.0
