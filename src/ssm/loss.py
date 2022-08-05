@@ -5,14 +5,19 @@ import ssm.aitchison as aitch
 from ssm.utils import t_to_alpha_sigma
 
 
-def kl(p, q, eps: float = 2 ** -16):
-    return p.dot(jnp.log(p + eps) - jnp.log(q + eps))
+@jax.vmap
+def kl(p, q):
+    eps: float = 2 ** -16
+    return jnp.tensordot(
+        p,
+        jnp.log(p + eps) - jnp.log(q + eps)
+    )
 
 
-def jsd(p, q, eps: float = 2. ** -16):
-    m = (p + q) / 2
-    pm = kl(p, m, eps)
-    qm = kl(q, m, eps)
+def jsd(p, q):
+    m = jnp.add(p, q) / 2
+    pm = kl(p, m)
+    qm = kl(q, m)
     return (pm + qm) / 2
 
 
@@ -71,11 +76,10 @@ def kl_denoising(params, state, x0, xt, key):
     return kl_div + score_norm
 
 
-def jsd_denoising(params, state, x0, xt, key):
-    keys = jax.random.split(key, 3)
+def jsd_denoising(params, state, x0, xt, t, keys):
     batch_dim, seq_len, simplex_dim = x0.shape
     t = jax.random.uniform(keys[0], (batch_dim,))
-    score = state.apply({'params': params},  xt, t, rngs={'dropout': keys[0]})
+    score = state.apply_fn({'params': params},  xt, t, rngs={'dropout': keys[1]})
     #score_norm = jnp.power(score, 2).sum()
-    js_div = jsd(softmax(x0), softmax(score))
-    return js_div
+    js_div = jsd(softmax(x0, axis=-1), softmax(score, axis=-1))
+    return (t * js_div).sum()

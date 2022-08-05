@@ -11,7 +11,6 @@ from omegaconf import OmegaConf
 import optax
 import os
 from pathlib import Path
-import tensorflow as tf
 import time
 from tqdm import tqdm, trange
 import wandb
@@ -69,6 +68,10 @@ def eval_model(state, texts, noised_texts, t, key):
 @partial(jax.pmap, axis_name='batch')
 def update_model(state, grads):
     return state.apply_gradients(grads=grads)
+
+
+def get_times(batch_size, key):
+    return jnp.cos(jax.random.uniform(key, (batch_size,)) * (jnp.pi / 2))
 
 
 def demo():
@@ -160,15 +163,8 @@ def main(args):
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(batch, num_local_devices)
-            times = psplit(
-                jax.random.uniform(
-                    time_key,
-                    (batch_size,),
-                    minval=config.sde.start_time,
-                    maxval=config.sde.end_time),
-                num_local_devices
-            )
-            noised_texts = forward_noising(texts, times, sde_keys)
+            times = psplit(get_times(batch_size, time_key), num_local_devices)
+            noised_texts = forward_noising(texts, times * config.sde.end_time, sde_keys)
             forward_sde_time = time.time() - batch_start
             times = times / config.sde.end_time
             loss, grads = apply_model(state, texts, noised_texts, times, psplit(jnp.stack(local_keys), num_local_devices))

@@ -57,19 +57,25 @@ def tokenize_and_split(tokenizer, seq_len, batch):
 
 
 def load_tokens(fp):
-    with gfile.GFile(fp, mode='rb') as fp:
-        data = np.load(fp)
-    return tf.data.Dataset.from_tensor_slices(data)
+    with gfile.GFile(fp.decode('utf-8'), mode='rb') as file:
+        data = np.load(file)
+    return data
 
 
 def get_datasets(config, seed):
     random.seed(seed)
-    train_data = tf.data.Dataset.list_files(f'{config.data.dataset_path}/train/*.npy', shuffle=True)
-    val_data= tf.data.Dataset.list_files(f'{config.data.dataset_path}/val/*.npy')
+    train_files = gfile.glob(f'{config.data.dataset_path}/train/*.npy')
+    val_files = gfile.glob(f'{config.data.dataset_path}/val/*.npy')
+    random.shuffle(train_files)
+    train_data = tf.data.Dataset.from_tensor_slices(train_files)
+    val_data= tf.data.Dataset.from_tensor_slices(val_files)
     prob_transformer = TokenToProbTransformer(seed, config)
     train_data = (
-        train_data
-        .interleave(load_tokens, cycle_length=10, num_parallel_calls=5)
+        train_data.map(
+            lambda fp: tf.numpy_function(func=load_tokens, inp=[fp], Tout=np.uint16),
+            num_parallel_calls=10
+        )
+        .unbatch()
         .shuffle(10_000)
         .batch(config.data.batch_size, drop_remainder=True)
         .map(
@@ -82,7 +88,11 @@ def get_datasets(config, seed):
         .prefetch(4)
     )
     val_data = (
-        val_data
+        val_data.map(
+            lambda fp: tf.numpy_function(func=load_tokens, inp=[fp], Tout=np.uint16),
+            num_parallel_calls=5
+        )
+        .unbatch()
         .batch(config.data.batch_size, drop_remainder=True)
         .map(
             lambda x: tf.numpy_function(
