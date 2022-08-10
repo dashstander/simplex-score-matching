@@ -78,8 +78,9 @@ def kl_denoising(params, state, x0, xt, key):
 
 def jsd_denoising(params, state, x0, xt, t, keys):
     batch_dim, seq_len, simplex_dim = x0.shape
+    xt = jax.nn.normalize(xt, axis=-1)
     t = jax.random.uniform(keys[0], (batch_dim,))
     score = state.apply_fn({'params': params},  xt, t, rngs={'dropout': keys[1]})
-    #score_norm = jnp.power(score, 2).sum()
+    score_norm = jnp.power(score, 2).sum()
     js_div = jsd(softmax(x0, axis=-1), softmax(score, axis=-1))
-    return (t * js_div).sum()
+    return (t * js_div).sum() + score_norm

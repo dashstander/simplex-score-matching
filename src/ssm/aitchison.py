@@ -44,7 +44,7 @@ def clr_inv(x: chex.Array, axis=-1, initial=None) -> chex.Array:
     return jax.nn.softmax(x, axis=axis, initial=initial)
 
 
-def clr(x: chex.Array, axis: int = -1, keepdims: bool = False) -> chex.Array:
+def clr(x, axis: int = -1, keepdims: bool = False):
     """ Centered log ration (clr) transform of a point on the simplex. Takes a point in the canonical basis to 
     """
     log_x = jnp.log(x)

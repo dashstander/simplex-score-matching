@@ -7,8 +7,6 @@ import jax.numpy as jnp
 import numpy as np
 from typing import Sequence
 
-from ssm.utils import alpha_sigma_to_log_snr, t_to_alpha_sigma
-
 
 @struct.dataclass
 class TransformerConfig:
@@ -152,10 +150,8 @@ class TransformerDiffusion(nn.Module):
         x.shape = 
         """
         deterministic = not training
-        #x = normalize_probabilities(x)
         x_init = nn.Dense(self.config.embed_dim)(x)
-        log_snr = alpha_sigma_to_log_snr(*t_to_alpha_sigma(t))
-        timestep_embed = FourierFeatures(self.config)(log_snr[:, None])
+        timestep_embed = FourierFeatures(self.config)(t[:, None])
         te_planes = jnp.tile(timestep_embed[:, None], (1, self.config.max_length, 1))
         x = jnp.concatenate([x_init, te_planes], axis=-1)
         x = FeedForward(self.config)(x)
@@ -164,9 +160,7 @@ class TransformerDiffusion(nn.Module):
         ])(x, None, deterministic=deterministic)        
         x = x + jnp.sqrt(2) * trans_x
         x = nn.Dense(self.config.vocab_size)(x)
-        x_final = x - jnp.mean(x, axis=-1, keepdims=True)
-        x_final = x_final / jnp.var(x_final, axis=-1, keepdims=True)
-        return x_final
+        return jax.nn.normalize(x, axis=-1)
 
 
 def create_train_state(rng, config, optimizer):
@@ -182,7 +176,6 @@ def create_train_state(rng, config, optimizer):
         config.data.seq_len,
         config.model.dropout,
         config.model.attention_dropout
-
     )
 
     model = TransformerDiffusion(transformer_config)

@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -85,7 +84,7 @@ def get_datasets(config, seed):
             ),
             num_parallel_calls=8
         )
-        .prefetch(4)
+        .prefetch(2)
     )
     val_data = (
         val_data.map(
@@ -93,6 +92,7 @@ def get_datasets(config, seed):
             num_parallel_calls=5
         )
         .unbatch()
+        .shuflle(10_000)
         .batch(config.data.batch_size, drop_remainder=True)
         .map(
             lambda x: tf.numpy_function(
@@ -100,7 +100,7 @@ def get_datasets(config, seed):
                 inp=[x],
                 Tout=np.float32
             ), 
-            num_parallel_calls=8
+            num_parallel_calls=4
         )
         .prefetch(2)
     )

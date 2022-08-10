@@ -10,8 +10,8 @@ data:
     eval_batch_size: 32
     seq_len: 512
     val_size: 2048
-    min_init_prob_concentration: 0.2
-    max_init_prob_concentration: 0.9
+    min_init_prob_concentration: 0.7
+    max_init_prob_concentration: 0.95
 
 tokenizer:
     path: "tokenizer/tokenizer-wiki8192.json"

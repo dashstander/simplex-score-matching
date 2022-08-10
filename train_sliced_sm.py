@@ -17,10 +17,10 @@ from tqdm import tqdm, trange
 import wandb
 
 import ssm.aitchison as aitch
-from ssm.data import TokenToProbTransformer
+from ssm.data import get_datasets, sample
 from ssm.loss import sliced_score_matching
 from ssm.model import create_train_state
-from ssm.sde import dirichlet_forward_sde
+from ssm.sde import dirichlet_forward_sde, dirichlet_reverse_sde
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
 
 
@@ -38,46 +38,14 @@ p.add_argument('--run-name', type=str, default='SSM Diffusion')
 p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 
 
-
-def get_datasets(config, seed):
-    prob_transformer = TokenToProbTransformer(seed, config)
-    data = np.lib.format.open_memmap(config.data.dataset_path, mode='r')
-    train_data = tf.data.Dataset.from_tensor_slices(data[:-config.data.val_size, :])
-    val_data = tf.data.Dataset.from_tensor_slices(data[-config.data.val_size:, :])
-    train_data = (
-        train_data
-        .shuffle(10_000)
-        .batch(config.data.batch_size, drop_remainder=True)
-        .map(
-            lambda x: tf.numpy_function(
-                func=prob_transformer, inp=[x],
-                Tout=np.float32
-            ),
-            num_parallel_calls=8
-        )
-        .prefetch(4)
-    )
-    val_data = (
-        val_data
-        .batch(config.data.batch_size, drop_remainder=True)
-        .map(
-            lambda x: tf.numpy_function(
-                func=prob_transformer,
-                inp=[x],
-                Tout=np.float32
-            ), 
-            num_parallel_calls=8
-        )
-        .prefetch(2)
-    )
-    return train_data, val_data, data[:-config.data.val_size, :].shape[0]
-
-
 def save(state, ema_params, dir, index):
     if jax.process_index() == 0:
         checkpoints.save_checkpoint(dir / 'train', jax_utils.unreplicate(state), index)
         checkpoints.save_checkpoint(dir / 'ema', jax_utils.unreplicate(ema_params), index)
 
+
+def get_times(batch_size, key):
+    return jnp.cos(jax.random.uniform(key, (batch_size,)) * (jnp.pi / 2))
 
 
 @partial(jax.pmap, axis_name='batch')
@@ -104,6 +72,19 @@ def eval_model(state, noised_texts, t, key):
 @partial(jax.pmap, axis_name='batch')
 def update_model(state, grads):
     return state.apply_gradients(grads=grads)
+
+
+@partial(jax.pmap, axis_name='batch')
+def demo(state, keys):
+    def score_fn(xt, t):
+        return state.apply_fn(
+            {'params': state.params},
+            xt[None],
+            t[None],
+            False,
+            rngs={'dropout': jax.random.PRNGKey(0)}
+        )
+    sol = dirichlet_reverse_sde(score_fn, (512, 8192), 10., keys)
 
 
 def make_optimizer(config):
@@ -170,7 +151,7 @@ def main(args):
 
     def do_eval(state, key):
         eval_loss = []
-        for batch in tqdm(val_data.as_numpy_iterator()):
+        for batch in tqdm(val_data.shuffle(800).take(100).as_numpy_iterator()):
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(batch, num_local_devices)
@@ -186,14 +167,11 @@ def main(args):
         epoch_losses = []
         i = num_steps
         for batch in tqdm(train_data.as_numpy_iterator(), total=train_size // batch_size):
-            if batch.shape[0] != batch_size:
-                continue
             batch_start = time.time()
             key, time_key, sde_key, *local_keys = rng_split(key, 3 + (2 * num_local_devices))
             sde_keys = psplit(jnp.stack(rng_split(sde_key, batch_size)), num_local_devices)
             texts = psplit(batch, num_local_devices)
-            times = psplit(
-                jax.random.uniform(time_key, (batch_size,), minval=config.sde.start_time, maxval=config.sde.end_time), num_local_devices)
+            times = psplit(get_times(batch_size, time_key), num_local_devices)
             noised_texts = forward_noising(texts, times, sde_keys)
             forward_sde_time = time.time() - batch_start
             times = times / config.sde.end_time
