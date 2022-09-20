@@ -15,10 +15,10 @@ dependencies:
   - ipykernel
   - ipywidgets
   - pip:
-    - chex
     - einops
     - flax
     - gcsfs
+    - git+https://github.com/geomstats/geomstats/commit/d3ecbc7d2f5e1ae74124a9e1987041272148a185
     - jax
     - optax
     - pytest

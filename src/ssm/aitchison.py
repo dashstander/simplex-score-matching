@@ -1,19 +1,16 @@
-from typing import Callable
-import chex
-from functools import lru_cache
 import jax
 import jax.numpy as jnp
 from typing import Callable, Tuple
 
 
-def add(a: chex.Array, b: chex.Array) -> chex.Array:
+def add(a, b):
     """ Vector addition on the simplex with the Aitchison geometry
     """
     x = jnp.multiply(a, b)
     return x / jnp.sum(x)
 
 
-def mul(a, alpha) -> chex.Array:
+def mul(a, alpha):
     """ Scalar multiplication on the simplex with the Aitchison geometry
     """
     x =  jnp.power(a, alpha)
@@ -38,7 +35,7 @@ def aitch_basis(dim: int):
     return basis.at[i].set(jnp.e) / total
 
 
-def clr_inv(x: chex.Array, axis=-1, initial=None) -> chex.Array:
+def clr_inv(x, axis=-1, initial=None):
     """ The inverse of the CLR transform. Just the softmax, but the code makes more sense with the aliasing
     """
     return jax.nn.softmax(x, axis=axis, initial=initial)
@@ -53,7 +50,7 @@ def clr(x, axis: int = -1, keepdims: bool = False):
 
 
 @jax.jit
-def aitch_dot(a: chex.Array, b: chex.Array) -> chex.Scalar:
+def aitch_dot(a, b):
     """ Inner product between two elements of the simplex with the Aitchison geometry
     """
     return jnp.dot(clr(a), clr(b))

@@ -1,4 +1,3 @@
-import chex
 from functools import partial
 import jax
 import jax.numpy as jnp
@@ -95,7 +94,7 @@ def ema_update(params, averaged_params, decay):
     return jax.tree_map(lambda p, a: p * (1 - decay) + a * decay, params, averaged_params)
 
 
-def probs_to_tokens(key, tokenizer, token_probs: chex.Array):
+def probs_to_tokens(key, tokenizer, token_probs):
     """
     """
     seq_len = token_probs.shape[0]
