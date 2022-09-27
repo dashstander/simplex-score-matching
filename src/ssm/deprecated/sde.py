@@ -4,7 +4,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-import ssm.aitchison as aitch
+import ssm.deprecated.aitchison as aitch
 
 
 

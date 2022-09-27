@@ -1,7 +1,7 @@
 import jax
 from jax.nn import softmax
 import jax.numpy as jnp
-import ssm.aitchison as aitch
+import ssm.deprecated.aitchison as aitch
 from ssm.utils import t_to_alpha_sigma
 
 

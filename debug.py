@@ -14,11 +14,11 @@ import time
 from tqdm import tqdm, trange
 import wandb
 
-import ssm.aitchison as aitch
-from ssm.data import TokenToProbsProcessor
+import ssm.deprecated.aitchison as aitch
+from ssm.deprecated.data import TokenToProbsProcessor
 from ssm.utils import psplit, tree_bytes, tree_size
 from ssm.model import create_train_state
-from ssm.sde import dirichlet_forward_sde
+from ssm.deprecated.sde import dirichlet_forward_sde
 
 
 p = argparse.ArgumentParser()

@@ -1,16 +1,13 @@
-chex
-datasets
 diffrax
 einops
 flax
 gcsfs
+./geomstats
 matplotlib
 omegaconf
 optax
 pytest
 torch
 seaborn
-tensorflow
-transformers
 tqdm
 wandb

@@ -15,8 +15,8 @@ import time
 from tqdm import tqdm, trange
 import wandb
 
-import ssm.aitchison as aitch
-from ssm.data import TokenToProbsProcessor
+import ssm.deprecated.aitchison as aitch
+from ssm.deprecated.data import TokenToProbsProcessor
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,

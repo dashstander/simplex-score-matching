@@ -6,7 +6,7 @@ import sys
 src_dir = Path(__file__).parent.parent
 sys.path.append(src_dir)
 print(sys)
-from ssm.simplex_proj import _vector_simplex_proj, vector_simplex_proj
+from ssm.deprecated.simplex_proj import _vector_simplex_proj, vector_simplex_proj
 
 
 def test_vector_simplex_proj():

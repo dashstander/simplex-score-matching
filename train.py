@@ -15,11 +15,11 @@ import time
 from tqdm import tqdm, trange
 import wandb
 
-import ssm.aitchison as aitch
-from ssm.data import get_datasets
+import ssm.deprecated.aitchison as aitch
+from ssm.deprecated.data import get_datasets
 from ssm.loss import jsd_denoising
 from ssm.model import create_train_state
-from ssm.sde import dirichlet_forward_sde
+from ssm.deprecated.sde import dirichlet_forward_sde
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
 
 

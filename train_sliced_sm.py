@@ -16,11 +16,11 @@ import time
 from tqdm import tqdm, trange
 import wandb
 
-import ssm.aitchison as aitch
-from ssm.data import get_datasets, sample
+import ssm.deprecated.aitchison as aitch
+from ssm.deprecated.data import get_datasets, sample
 from ssm.loss import sliced_score_matching
 from ssm.model import create_train_state
-from ssm.sde import dirichlet_forward_sde, dirichlet_reverse_sde
+from ssm.deprecated.sde import dirichlet_forward_sde, dirichlet_reverse_sde
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
 
 
