@@ -5,9 +5,10 @@ import jax.numpy as jnp
 
 
 @struct.dataclass
-class GeodesicRandomWalk:
+class ForwardGeodesicRandomWalk:
     manifold = struct.field(pytree_node=False)
     tangent_dim = struct.field(pytree_node=False)
+    
 
     @classmethod
     def create(cls, manifold):

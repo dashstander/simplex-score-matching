@@ -32,10 +32,10 @@ class BiGramSampler:
         return [self._sample() for _ in range(n)]
 
     def to_jax(self, s):
-        return [self.vectors[char] for char in s]
+        return jnp.stack([self.vectors[char] for char in s])
 
     def make_batch(self, n: int):
         tensors = [
-            self.to_jax(self._sample()).unsqueeze(0) for _ in range(n)
+            self.to_jax(self._sample()) for _ in range(n)
         ]
         return jnp.stack(tensors)

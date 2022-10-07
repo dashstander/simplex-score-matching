@@ -16,7 +16,7 @@ from tqdm import tqdm, trange
 import wandb
 
 import ssm.deprecated.aitchison as aitch
-from ssm.deprecated.data import TokenToProbsProcessor
+from ssm.data.synthetic import TokenToProbsProcessor
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,
