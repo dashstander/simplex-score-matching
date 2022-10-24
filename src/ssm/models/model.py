@@ -1,0 +1,176 @@
+from einops import rearrange, repeat
+from functools import partial
+import haiku as hk
+import jax
+import jax.numpy as jnp
+import numpy as np
+from typing import Sequence
+
+
+class TransformerConfig:
+    vocab_size: int
+    embed_dim: int
+    model_dim: int
+    mlp_dim: int
+    num_layers: int = 3
+    time_dim: int = 16
+    num_heads: int = 8
+    max_length: int = 512
+    dropout_rate: float = 0.1
+    attention_dropout_rate: float = 0.1
+    fourier_init_std: float = 0.2
+
+
+LayerNorm = partial(hk.LayerNorm, create_scale=True, create_offset=True, axis=-1)
+
+
+def normalize_probabilities(x):
+    logx = jnp.log1p(x)
+    x_mean0 = logx - jnp.mean(logx, axis=-1, keepdims=True)
+    x_normalized = x_mean0 / jnp.var(x_mean0, axis=-1, keepdims=True)
+    return x_normalized
+
+
+def rotate_every_two(x):
+    x1 = x[:, :, :, 0::2]
+    x2 = x[:, :, :, 1::2]
+    x = jnp.stack((-x2, x1), axis=-1)
+    return rearrange(x, '... d j -> ... (d j)')
+
+
+def apply_rotary_pos_emb(x, sincos):
+    sin, cos = map(lambda t: repeat(t, '... b n -> ... b (n j)', j=2)[-x.shape[-3]:, None, :], sincos)
+    return (x * cos) + (rotate_every_two(x) * sin)
+
+
+def fixed_pos_embedding(x, seq_dim: int = 0):
+    dim = x.shape[-1]
+    inv_freq = 1. / (10000 ** (np.arange(0, dim, 2) / dim))
+    sinusoid_inp = np.einsum('i , j -> i j', np.arange(x.shape[seq_dim]), inv_freq)
+    return np.sin(sinusoid_inp), np.cos(sinusoid_inp)
+
+
+
+class FourierFeatures(hk.Module):
+    def __init__(self, output_size: int = 16, std: float = 1., name: str = None):
+        super().__init__(name=name)
+        assert output_size % 2 == 0
+        self.output_size = output_size
+        self.std = std
+
+    def __call__(self, x):
+        w = hk.get_parameter(
+            'w',
+            [self.output_size // 2,
+            x.shape[1]],
+            init=hk.initializers.RandomNormal(self.std, 0)
+        )
+        f = 2 * jnp.pi * x @ w.T
+        return jnp.concatenate([jnp.cos(f), jnp.sin(f)], axis=-1)
+
+
+class AttentionBlock(hk.Module):
+
+    def __init__(self, config: TransformerConfig, name: str = None):
+        super().__init__(name=name)
+        self.config = config
+        self.ln = LayerNorm(use_bias=False, use_scale=False)
+        self.mha = hk.MultiHeadAttention(self.config.num_heads)
+        self.dropout_rate = self.config.attention_dropout_rate
+
+    def __call__(self, x, dropout: float = 1.):
+        x = hk.dropout(hk.next_rng_key(), dropout * self.dropout_rate, x)
+        x = self.ln(x)
+        return self.mha(x, x, x)
+
+
+class FeedForward(hk.Module):
+
+    def __init__(self, config: TransformerConfig, name: str = None):
+        super().__init__(name=name)
+        self.config = config
+        self.ln = LayerNorm(use_bias=False, use_scale=False)
+        self.dense_in = hk.Linear(self.config.mlp_dim, use_bias=False)
+        self.dense_out = hk.Linear(self.config.model_dim, use_bias=False)
+        self.dropout_rate = self.config.dropout_rate
+
+    def __call__(self, x, dropout: float = 1.):
+        x = hk.dropout(
+            hk.next_rng_key(),
+            dropout * self.dropout_rate,
+            x
+        )
+        x = self.ln(x)
+        x = self.dense_in(x)
+        x = jax.nn.gelu(x)
+        x = self.dense_out(x)
+        return x
+
+
+class TransformerLayer(hk.Module):
+
+    def __init__(self, config: TransformerConfig, name: str = None):
+        super().__init__(name=name)
+        self.transformer = AttentionBlock(config)
+        self.ff = FeedForward(config)
+
+    def __call__(self, x, dropout: float = 1.):
+        #x_rot = x[:, :, :self.d_rotary]
+        #x_pass = x[ :, :, self.d_rotary:]
+        #sincos = fixed_pos_embedding(x_rot, seq_dim=1)
+        #x_rot = apply_rotary_pos_emb(x_rot, sincos)
+        #x = jnp.concatenate([x_rot, x_pass], axis=-1)
+        x = x + self.transformer(x, dropout)
+        x = x + self.ff(x)
+        return x
+
+
+class TransformerDiffusion(hk.Module):
+
+    def __init__(self, config: TransformerConfig, is_training: bool = True, name: str = None):
+        super().__init__(name=name)
+        self.config = config
+        self.dropout = 1. if is_training else 0.
+        self.linear0 = hk.Linear(self.config.embed_dim)
+        self.fourier = FourierFeatures(self.config)
+        self.ff1 = FeedForward(config)
+        self.transformers = [TransformerLayer(self.config) for _ in range(self.config.num_layers)]
+        self.linear1 = hk.Linear(self.config.vocab_size)
+        
+
+    def __call__(self, x, t):
+        x_init = self.linear0(x)
+        timestep_embed = self.fourier(t[:, None])
+        te_planes = jnp.tile(timestep_embed[:, None], (1, self.config.max_length, 1))
+        x = jnp.concatenate([x_init, te_planes], axis=-1)
+        x = self.ff1(self.config)(x, self.dropout)
+        trans_x = x
+        for layer in self.transformers:
+            trans_x = layer(trans_x, self.dropout)
+        x = x + jnp.sqrt(2) * trans_x
+        x = self.linear1(self.config.vocab_size)(x)
+        return jax.nn.normalize(x, axis=-1)
+
+
+def create_train_state(rng, config, optimizer):
+    init_rng, dropout_rng = jax.random.split(rng)
+    transformer_config = TransformerConfig(
+        config.tokenizer.vocab_size,
+        config.model.embed_dim,
+        config.model.model_dim,
+        config.model.mlp_dim,
+        config.model.num_layers,
+        config.model.time_dim,
+        config.model.num_heads,
+        config.data.seq_len,
+        config.model.dropout,
+        config.model.attention_dropout
+    )
+
+    model = TransformerDiffusion(transformer_config)
+    params = model.init(
+        {'params': init_rng, 'dropout': dropout_rng},
+        jnp.ones([1, config.data.seq_len, config.tokenizer.vocab_size]),
+        jnp.ones((1,))    
+    )['params']
+    return TrainState.create(apply_fn=model.apply, params=params, tx=optimizer)

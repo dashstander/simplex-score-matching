@@ -1,21 +1,15 @@
-from flax import struct
 from functools import partial
 import jax
 import jax.numpy as jnp
 
 
-@struct.dataclass
 class ForwardGeodesicRandomWalk:
-    manifold = struct.field(pytree_node=False)
-    tangent_dim = struct.field(pytree_node=False)
-    
 
-    @classmethod
-    def create(cls, manifold):
-        tangent_dim = manifold.embedding_space.dim
-        return cls(manifold, tangent_dim)
+    def __init__(self, manifold):
+        self.manifold = manifold
+        self.tangent_dim = manifold.embedding_space.dim
 
-    @partial(jax.vmap, in_axes=(None, None, 0, 0, 0))
+    #@partial(jax.vmap, in_axes=(None, None, 0, 0, 0))
     def geodesic_random_walk(self, num_steps, time, rng_key, x0=None):
         step_size = time / num_steps
         gamma = jnp.sqrt(step_size)

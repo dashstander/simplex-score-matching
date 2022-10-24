@@ -1,29 +1,23 @@
 import argparse
 from functools import partial
-from flax import jax_utils
-from flax.training import checkpoints
-from flax.training.train_state import TrainState
-from more_itertools import chunked
 import jax
 import jax.numpy as jnp
-import jax.random as jrand
+from jax.random import split, PRNGKey
 import numpy as np
 from omegaconf import OmegaConf
 import optax
-import ray
 import time
 from tqdm import tqdm, trange
 import wandb
 
-import ssm.deprecated.aitchison as aitch
-from ssm.data.synthetic import TokenToProbsProcessor
+from ssm.data.sudoku import FlatSudoku, make_batch
 from ssm.utils import (
     psplit,
     t_to_alpha_sigma,
     tree_bytes,
     tree_size
 )
-from ssm.model import TransformerConfig, TransformerDiffusion
+#from ssm.model import TransformerConfig, TransformerDiffusion
 
 
 p = argparse.ArgumentParser()
@@ -47,13 +41,13 @@ def apply_model(state, texts, key):
         """
         `x` is in $R^{n} in CLR (centered log-ratio) coordinates. It's one softmax away from being on the simplex.$
         """
-        keys = jrand.split(key, 3)
+        keys = split(key, 3)
         batch_dim, seq_len, simplex_dim = x0.shape
-        t = jrand.uniform(keys[0], (x0.shape[0],))
+        t = jax.random.uniform(keys[0], (x0.shape[0],))
         alphas, sigmas = t_to_alpha_sigma(t)
         alphas, sigmas = jnp.expand_dims(alphas, (1, 2)), jnp.expand_dims(sigmas, (1, 2))
         # Generate noise
-        raw_noise = jrand.normal(keys[1], (batch_dim, seq_len, simplex_dim))
+        raw_noise = jax.random.normal(keys[1], (batch_dim, seq_len, simplex_dim))
         x = aitch.clr(x0, axis=-1, keepdims=True)
         simplex_scaled_noise = aitch.simplex_metric_tensor_inv(
             x0,
@@ -75,7 +69,7 @@ def update_model(state, grads):
     
 
 def create_train_state(rng, config):
-    init_rng, dropout_rng = jrand.split(rng)
+    init_rng, dropout_rng = split(rng)
     transformer_config = TransformerConfig(
         config.tokenizer.vocab_size,
         config.model.embed_dim,
@@ -119,19 +113,19 @@ def main(args):
     train_data = get_dataset(config)
     np_seeds = np.random.SeedSequence(args.seed)
 
-    preproc_pool = ray.util.ActorPool(
-        [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
-    )
+    #preproc_pool = ray.util.ActorPool(
+    #    [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
+    #)
     
-    key = jrand.PRNGKey(args.seed)
+    key = PRNGKey(args.seed)
     
-    key, state_key = jrand.split(key)
+    key, state_key = split(key)
     epoch = 0
     train_state = create_train_state(state_key, config)
     if args.resume:
         train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
 
-    key = jrand.split(key, num_processes)[local_rank]
+    key = split(key, num_processes)[local_rank]
 
     dataset_size = train_data.shape[0]
 
@@ -177,8 +171,8 @@ def main(args):
         num_steps = 0
         for epoch in trange(config.data.epochs):
             tqdm.write(f'Epoch {epoch}')
-            key, index_key, *subkeys = jrand.split(key, 3)
-            permuted_indices = jrand.permutation(index_key, dataset_size).tolist()
+            key, index_key, *subkeys = split(key, 3)
+            permuted_indices = jax.random.permutation(index_key, dataset_size).tolist()
             train_state, num_steps = train_epoch(train_state, permuted_indices, num_steps, subkeys[0])
             if jax.process_index() == 0:
                 checkpoints.save_checkpoint(args.checkpoint_dir, jax_utils.unreplicate(train_state), epoch, prefix='epoch_')

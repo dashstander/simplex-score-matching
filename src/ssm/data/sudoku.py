@@ -1,50 +1,53 @@
-from copy import deepcopy
-from flax import struct
+
+from concurrent.futures import ProcessPoolExecutor
+import jax
 import jax.numpy as jnp
+from sudoku import Sudoku
+import sys
 
 
-class Sudoku:
+class FlatSudoku:
     
     def __init__(self, puzzle):
         self.width = puzzle.width
         self.size = self.width ** 2
-        self.zeros = [0] * self.size
-        self.map = self._make_map(self.size)
         self.puzzle = puzzle
         self.solution = puzzle.solve()
         self.solution_tensor = self.to_tensor()
-        self.mask = self.make_mask()
-        
-    def _make_map(self, size):
-        kvs = {}
-        for i in range(size):
-            l = deepcopy(self.zeros)
-            l[i] = 1
-            kvs[i+1] = l
-        return kvs
 
-    def make_mask(self):
-        board = []
-        for row in self.puzzle.board:
-            for value in row:
-                if value is not None:
-                    board.append(0)
-                else:
-                    board.append(1)
-        return jnp.array(board)
-                
     def to_tensor(self):
-        board = []
-        for row in self.solution.board:
-            for value in row:
-                board.append(self.map[value])
-        return jnp.array(board)
+        return jax.nn.one_hot(
+            jnp.array(self.solution.board).ravel(),
+            num_classes=self.size
+        ).astype(jnp.float32)
 
     @classmethod
-    def from_jax(cls, flat_board):
-        pass
+    def make_puzzle(cls, seed=None):
+        return cls(Sudoku(width=3, height=3, seed=seed))
 
 
-@struct.dataclass
-class SudokuRandomWalker:
+def generate_masks(rng, batch_size, min_given=0.1, max_given=0.8):
+    num_given_key, pos_key = jax.random.split(rng)
+    given = jax.random.uniform(
+        num_given_key,
+        (batch_size,),
+        minval=min_given,
+        maxval=max_given
+    )
+    return jax.random.bernoulli(pos_key, p=given, shape=(batch_size, 81))
 
+
+def make_puzzles(rng, batch_size):
+    seeds = jax.random.randint(rng, (batch_size,), 0, sys.maxsize).tolist()
+    def _puzzle(s):
+        return FlatSudoku.make_puzzle(s).solution_tensor
+    with ProcessPoolExecutor(max_workers=64) as exec:
+        puzzles = [p for p in exec.map(_puzzle, seeds)]
+    return jnp.stack(puzzles)
+
+    
+def make_batch(rng, batch_size):
+    puzzle_key, mask_key = jax.random.split(rng)
+    puzzles = make_puzzles(puzzle_key, batch_size)
+    masks = generate_masks(mask_key, batch_size)
+    return puzzles, masks
