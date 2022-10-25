@@ -17,7 +17,7 @@ from ssm.utils import (
     tree_bytes,
     tree_size
 )
-#from ssm.model import TransformerConfig, TransformerDiffusion
+from ssm.models.model import TransformerConfig, TransformerDiffusion
 
 
 p = argparse.ArgumentParser()

@@ -1,13 +1,13 @@
-diffrax
-einops
-flax
-gcsfs
-./geomstats
-matplotlib
-omegaconf
-optax
-pytest
-torch
-seaborn
+--find-links https://storage.googleapis.com/jax-releases/libtpu_releases.html
+confection
+dm-haiku==0.0.8
+einops==0.3.2
+google-cloud-storage==1.42.3
+jax[tpu]==0.3.16
+optax==0.1.3
+pydantic
+py-sudoku
+smart_open[gcs]==5.2.1
+tensorflow==2.10.0
 tqdm
 wandb

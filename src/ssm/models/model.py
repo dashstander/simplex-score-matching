@@ -1,12 +1,13 @@
+from dataclasses import dataclass
 from einops import rearrange, repeat
 from functools import partial
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-from typing import Sequence
 
 
+@dataclass
 class TransformerConfig:
     vocab_size: int
     embed_dim: int
@@ -16,8 +17,8 @@ class TransformerConfig:
     time_dim: int = 16
     num_heads: int = 8
     max_length: int = 512
-    dropout_rate: float = 0.1
-    attention_dropout_rate: float = 0.1
+    dropout: float = 0.1
+    attention_dropout: float = 0.1
     fourier_init_std: float = 0.2
 
 
@@ -74,9 +75,13 @@ class AttentionBlock(hk.Module):
     def __init__(self, config: TransformerConfig, name: str = None):
         super().__init__(name=name)
         self.config = config
-        self.ln = LayerNorm(use_bias=False, use_scale=False)
-        self.mha = hk.MultiHeadAttention(self.config.num_heads)
-        self.dropout_rate = self.config.attention_dropout_rate
+        self.ln = LayerNorm()
+        self.mha = hk.MultiHeadAttention(
+            self.config.num_heads,
+            self.config.model_dim,
+            w_init = hk.initializers.RandomNormal()
+        )
+        self.dropout_rate = self.config.attention_dropout
 
     def __call__(self, x, dropout: float = 1.):
         x = hk.dropout(hk.next_rng_key(), dropout * self.dropout_rate, x)
@@ -89,10 +94,10 @@ class FeedForward(hk.Module):
     def __init__(self, config: TransformerConfig, name: str = None):
         super().__init__(name=name)
         self.config = config
-        self.ln = LayerNorm(use_bias=False, use_scale=False)
-        self.dense_in = hk.Linear(self.config.mlp_dim, use_bias=False)
-        self.dense_out = hk.Linear(self.config.model_dim, use_bias=False)
-        self.dropout_rate = self.config.dropout_rate
+        self.ln = LayerNorm()
+        self.dense_in = hk.Linear(self.config.mlp_dim, with_bias=False)
+        self.dense_out = hk.Linear(self.config.model_dim, with_bias=False)
+        self.dropout_rate = self.config.dropout
 
     def __call__(self, x, dropout: float = 1.):
         x = hk.dropout(
@@ -102,7 +107,7 @@ class FeedForward(hk.Module):
         )
         x = self.ln(x)
         x = self.dense_in(x)
-        x = jax.nn.gelu(x)
+        x = jax.nn.relu(x)
         x = self.dense_out(x)
         return x
 
@@ -132,7 +137,7 @@ class TransformerDiffusion(hk.Module):
         self.config = config
         self.dropout = 1. if is_training else 0.
         self.linear0 = hk.Linear(self.config.embed_dim)
-        self.fourier = FourierFeatures(self.config)
+        self.fourier = FourierFeatures(self.config.time_dim)
         self.ff1 = FeedForward(config)
         self.transformers = [TransformerLayer(self.config) for _ in range(self.config.num_layers)]
         self.linear1 = hk.Linear(self.config.vocab_size)
@@ -152,25 +157,9 @@ class TransformerDiffusion(hk.Module):
         return jax.nn.normalize(x, axis=-1)
 
 
-def create_train_state(rng, config, optimizer):
-    init_rng, dropout_rng = jax.random.split(rng)
-    transformer_config = TransformerConfig(
-        config.tokenizer.vocab_size,
-        config.model.embed_dim,
-        config.model.model_dim,
-        config.model.mlp_dim,
-        config.model.num_layers,
-        config.model.time_dim,
-        config.model.num_heads,
-        config.data.seq_len,
-        config.model.dropout,
-        config.model.attention_dropout
-    )
 
-    model = TransformerDiffusion(transformer_config)
-    params = model.init(
-        {'params': init_rng, 'dropout': dropout_rng},
-        jnp.ones([1, config.data.seq_len, config.tokenizer.vocab_size]),
-        jnp.ones((1,))    
-    )['params']
-    return TrainState.create(apply_fn=model.apply, params=params, tx=optimizer)
+def make_diffusion_fn(model_config, training):
+    def fn(x, t):
+        pred = TransformerDiffusion(model_config, training)
+        return pred
+    return fn

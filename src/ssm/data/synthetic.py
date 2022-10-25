@@ -1,6 +1,5 @@
 
 from random import choice, choices
-import jax
 import jax.numpy as jnp
 
 
