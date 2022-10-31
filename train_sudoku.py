@@ -138,7 +138,7 @@ def main(args):
         3
     )
 
-    model, params, opt, opt_state = setup_model(config, args, model_key)
+    model, params, opt, opt_state = setup_model(config, model_key)
     forward_diffusion_fn = setup_forward_diffusion(config, diffusion_key)
     
     #if args.resume:
