@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jnp
 from jax.random import split as rng_split
 import numpy as np
-from omegaconf import OmegaConf
 import optax
 import os
 from pathlib import Path
@@ -22,8 +21,7 @@ from ssm.model import create_train_state
 from ssm.utils import ema_update, psplit, tree_bytes, tree_size
 
 
-# ~17GB
-os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
+
 
 
 p = argparse.ArgumentParser()

@@ -39,17 +39,23 @@ p.add_argument('--run-name', type=str, default='SSM Diffusion')
 p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 
 
-def save_checkpoint(params, params_ema, opt_state, epoch, key):
+def wandb_log(data):
+    if jax.process_index() == 0:
+        wandb.log(data)
+
+
+def save_checkpoint(checkpoint_dir, params, opt_state, epoch, steps, key):
     if jax.process_index() != 0:
         return
+    ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
     obj = {
         'params': unreplicate(params),
-        'params_ema': unreplicate(params_ema),
+        #'params_ema': unreplicate(params_ema),
         'opt_state': unreplicate(opt_state),
         'epoch': epoch,
         'key': key
     }
-    with open('model.pkl', 'wb') as f:
+    with open(ckpt_path, 'wb') as f:
         pickle.dump(obj, f)
 
 
@@ -117,29 +123,22 @@ def main(args):
         name=args.run_name
     )
 
+    checkpoint_dir = Path(args.checkpoint_dir)
+
     num_local_devices = jax.local_device_count()
     devices = jax.local_devices()
     num_processes = jax.process_count()
     local_rank = jax.process_index()
 
     print(f'Beginning training with {num_local_devices} devices.')
-
-    #train_data = get_dataset(config)
-    np_seeds = np.random.SeedSequence(args.seed)
-
-    #preproc_pool = ray.util.ActorPool(
-    #    [TokenToProbsProcessor.remote(s, config, train_data) for s in np_seeds.spawn(2)]
-    #)
     
-    key, model_key, diffusion_key = jax.random.split(jax.random.PRNGKey(args.seed), 3)
-
-    epoch = 0
+    key, model_key, diffusion_key = jax.random.split(
+        jax.random.PRNGKey(args.seed),
+        3
+    )
 
     model, params, opt, opt_state = setup_model(config, args, model_key)
     forward_diffusion_fn = setup_forward_diffusion(config, diffusion_key)
-
-    params = jax.device_put_replicated(params, devices)
-    opt_state = jax.device_put_replicated(opt_state, devices)
     
     #if args.resume:
     #    train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
@@ -150,51 +149,43 @@ def main(args):
 
     #dataset_size = train_data.shape[0]
     if local_rank == 0:
-        print(f'Initialized model with {tree_size(train_state.params)} parameters, taking up {tree_bytes(train_state.params)/1e9}GB')
+        print(f'Initialized model with {tree_size(params)} parameters, taking up {tree_bytes(params)/1e9}GB')
     
-    
-    def train_epoch(state, indices, num_steps: int, key):
-        data_iterator = preproc_pool.map_unordered(
-            lambda a, v: a.to_probs.remote(v),
-            chunked(indices, config.data.batch_size)
-        )
-        epoch_start = time.time()
+    params = jax.device_put_replicated(params, devices)
+    opt_state = jax.device_put_replicated(opt_state, devices)
+
+    def train_epoch(params, opt_state, epoch, key):
+        executor = ThreadPoolExecutor(max_workers=10)
+        key, data_key = jax.random.split(key)
+        data_iterator = executor.map(make_batch, jax.random.split(data_key, 50_000))
         epoch_losses = []
-        i = num_steps
-        for batch in tqdm(data_iterator, total=dataset_size // config.data.batch_size):
-            if batch.shape[0] != config.data.batch_size:
-                continue
+        for i, batch in tqdm(enumerate(data_iterator), total=50_000):
+            puzzles, masks = batch
             batch_start = time.time()
             key, subkey = jax.random.split(key)
             local_keys = split_and_stack(subkey, num_local_devices)
-            texts = psplit(batch, num_local_devices)
-            loss, grads = train_step_fn(state, texts, local_keys)
+            puzzles = psplit(puzzles, num_local_devices)
+            masks = psplit(masks, num_local_devices)
+            loss, grads = train_step_fn(params, opt_state, local_keys, puzzles, masks)
             batch_end = time.time()
             single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
-            if jax.process_index() == 0:
-                wandb.log(batch_log)
+            wandb_log(batch_log)
             del batch_log
-            i += 1
-            if i % 50 == 0:
+            if i % 1000 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
-                save_checkpoint(args.checkpoint_dir, state, i)
+                save_checkpoint(checkpoint_dir, params, opt_state, epoch, i)
         epoch_loss = np.mean(epoch_losses)
-        epoch_time = time.time() - epoch_start
-        if jax.process_index() == 0:
-            wandb.log({'epoch/loss': epoch_loss, 'epoch/time': epoch_time})
-        return state, i
+        
+        wandb_log({'epoch/loss': epoch_loss})
+        return params, opt_state
 
     try:
-        num_steps = 0
         for epoch in trange(config.data.epochs):
             tqdm.write(f'Epoch {epoch}')
-            key, index_key, *subkeys = jax.random.split(key, 3)
-            #permuted_indices = jax.random.permutation(index_key, dataset_size).tolist()
-            #train_state, num_steps = train_epoch(train_state, permuted_indices, num_steps, subkeys[0])
-            #if jax.process_index() == 0:
-            #    save_checkpoint(args.checkpoint_dir, jax_utils.unreplicate(train_state), epoch, prefix='epoch_')
+            key, subkey = jax.random.split(key)
+            params, opt_state = train_epoch(params, opt_state, epoch, subkey)
     except KeyboardInterrupt:
         pass
 

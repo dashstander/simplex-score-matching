@@ -2,7 +2,6 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import jax.random as jrand
-import numpy as np
 
 """ Signal / Noise ratio utils stolen shamelessly from @crowsonkb,
 https://github.com/crowsonkb/v-diffusion-jax/blob/master/diffusion/utils.py
@@ -56,6 +55,10 @@ def punsplit(x):
     )
 
 
+def split_and_stack(rng, size):
+    return jnp.stack(jax.random.split(rng, size))
+
+
 
 def tree_size(tree) -> int:
     """ Stolen shamelessly from Haiku 
@@ -68,24 +71,6 @@ def tree_bytes(tree) -> int:
     """
     return sum(x.size * x.dtype.itemsize for x in jax.tree_leaves(tree))
 
-
-def tokens_to_probs(rng, token_ids, concentration=0.9, vocab_size=8192):
-    """ Takes a 
-    """
-    batch, seq_len = token_ids.shape
-    
-    def _tokens_to_probs(token_ids):
-        x = rng.random((seq_len, vocab_size)) / vocab_size
-        # At this point E(x.sum()) == 0.5 
-        # What we want is for new_val / (x.sum() + new_val) ~ concentration
-        # --> new_val == (concentration * x.sum())/(1 - concentration)
-        # Then, in the normalized vector, the appropriate token will have ~ concentration weight,
-        # and the others will have the rest
-        x_sum = x.sum(axis=1)
-        conc_val = np.mean((concentration * x_sum) / (1 - concentration))
-        np.put_along_axis(x, token_ids[:, None], conc_val, axis=1)
-        return x / x.sum(axis=1)[:, None]
-    return np.apply_along_axis(_tokens_to_probs, axis=1, arr=token_ids)
 
 
 

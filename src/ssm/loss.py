@@ -1,8 +1,37 @@
 import jax
-from jax.nn import softmax
 import jax.numpy as jnp
 import ssm.deprecated.aitchison as aitch
 from ssm.utils import t_to_alpha_sigma
+
+
+
+def make_gegenbauer_polynomials(alpha, l_max):
+
+    def out_fn(x):
+
+        def step(carry, n):
+            C_nm2, C_nm1 = carry
+            C_n = (
+                1 / n * (2 * x * (n + alpha - 1) * C_nm1 - 
+                (n + 2 * alpha - 2) * C_nm2)
+            )
+            return (C_nm1, C_n), C_n
+
+        C_0 = jnp.ones_like(x)
+        C_1 = 2 * alpha * x
+        initial_polys = jnp.array([C_0, C_1])
+        _, polys = jax.lax.scan(
+            step,
+            (C_0, C_1),
+            jnp.arange(2, l_max + 1),
+        )
+        all_polys = jnp.concatenate([initial_polys, polys])
+        return all_polys
+    
+    return out_fn
+
+
+
 
 
 @jax.vmap
@@ -66,21 +95,13 @@ def v_denoising(params, state, x0, key):
     return jnp.mean((v - targets)**2)
 
 
-def kl_denoising(params, state, x0, xt, key):
+
+
+def grw_denoising(params, model_fn, forward_noise_fn, x0, key):
     keys = jax.random.split(key, 3)
     batch_dim, seq_len, simplex_dim = x0.shape
     t = jax.random.uniform(keys[0], (batch_dim,))
-    score = state.apply({'params': params},  xt, t, rngs={'dropout': keys[0]})
-    score_norm = jnp.power(score, 2).sum()
-    kl_div = kl(softmax(x0), softmax(score))
-    return kl_div + score_norm
 
+    xt = forward_noise_fn(x0, t)
+    pred_flow = model_fn(params, keys[1], xt, t)
 
-def jsd_denoising(params, state, x0, xt, t, keys):
-    batch_dim, seq_len, simplex_dim = x0.shape
-    xt = jax.nn.normalize(xt, axis=-1)
-    t = jax.random.uniform(keys[0], (batch_dim,))
-    score = state.apply_fn({'params': params},  xt, t, rngs={'dropout': keys[1]})
-    score_norm = jnp.power(score, 2).sum()
-    js_div = jsd(softmax(x0, axis=-1), softmax(score, axis=-1))
-    return (t * js_div).sum() + score_norm
