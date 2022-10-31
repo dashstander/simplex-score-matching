@@ -80,16 +80,17 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
 
 
 def make_optimizer(config):
+
     schedule = optax.warmup_cosine_decay_schedule(
-        init_value=config.optimizer.init_lr,
-        peak_value=config.optimizer.peak_lr,
-        warmup_steps=config.optimizer.warmup_steps,
-        decay_steps=config.optimizer.decay_steps + config.optimizer.warmup_steps,
-        end_value=config.optimizer.lr,
+        init_value=config['init_lr'],
+        peak_value=config['peak_lr'],
+        warmup_steps=config['warmup_steps'],
+        decay_steps=config['optimizer.decay_steps'] + config['warmup_steps'],
+        end_value=config['lr'],
     )
     base_opt = optax.chain(
         optax.adamw(learning_rate=schedule),
-        optax.clip(config.optimizer.grad_clip)
+        optax.clip(config['grad_clip'])
     )
     return base_opt
 
@@ -100,7 +101,7 @@ def setup_model(config, key):
     model_config = TransformerConfig(**config['model'])
     model = hk.transform(make_diffusion_fn(model_config, training=True))
     params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(t_shape))
-    opt = make_optimizer(config)
+    opt = make_optimizer(config['optimizer'])
     opt_state = opt.init(params)
     return model, params, opt, opt_state
 
