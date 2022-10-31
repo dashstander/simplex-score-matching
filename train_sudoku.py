@@ -63,8 +63,9 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
 
     def loss_fn(params, x0, masks, key):
         time_key, grw_key, model_key = jax.random.split(key, 3)
-        t = jax.random.uniform(time_key, (x0.shape[0],))       
-        noised_x, target_score = grw_fn(grw_key, x0, t)
+        batch_size, seq_len, manif_dim = x0.shape
+        t = jax.random.uniform(time_key, (batch_size,))       
+        noised_x, target_score = grw_fn(split_and_stack(grw_key, batch_size), x0, t)
         target_score = target_score / jnp.sum(target_score ** 2, axis=-1, keepdims=True)
         pred_score = model.apply(params, model_key, noised_x, masks, t)
         return jnp.mean((pred_score - target_score)**2)
