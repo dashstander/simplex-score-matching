@@ -67,8 +67,10 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         t = jax.random.uniform(time_key, (batch_size,))       
         noised_x, target_score = grw_fn(x0, t, split_and_stack(grw_key, batch_size))
         target_score = target_score / jnp.sum(target_score ** 2, axis=-1, keepdims=True)
-        pred_score = model.apply(params, model_key, noised_x, masks, t)
-        return jnp.mean((pred_score - target_score)**2)
+        pred_score = model.apply(params, model_key, noised_x, t)
+        not_masked = jnp.logical_not(masks)
+        mse = jnp.square(pred_score - target_score)[not_masked]
+        return jnp.mean(mse)
 
     def train_step(params, opt_state, key, inputs, masks):
         loss_grads = jax.value_and_grad(loss_fn)(params,inputs, masks, key)
