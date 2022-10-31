@@ -150,8 +150,10 @@ def main(args):
     key = jax.random.split(key, num_processes)[local_rank]
 
     #dataset_size = train_data.shape[0]
+    num_params = hk.data_structures.tree_size(params)
+    num_bytes = hk.data_structures.tree_bytes(params)
     if local_rank == 0:
-        print(f'Initialized model with {hk.tree_size(params)} parameters, taking up {hk.tree_bytes(params)/1e9}GB')
+        print(f'Initialized model with {num_params} parameters, taking up {num_bytes/1e9}GB')
     
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
