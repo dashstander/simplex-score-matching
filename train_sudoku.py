@@ -111,9 +111,10 @@ def setup_forward_diffusion(config, key):
     diffusion = hk.transform(make_sudoku_forward_walker)
     x_init = jnp.full((81, 9), 1./3)
     t_init = jnp.array(2.)
-    diff_params = diffusion.init(key, x_init, t_init, config['sde']['num_steps'])
+    num_steps = config['sde']['num_steps']
+    diff_params = diffusion.init(key, x_init, t_init, num_steps)
     def forward_fn(x0, t, rng):
-        return diffusion.apply(diff_params, rng, x0, t)
+        return diffusion.apply(diff_params, rng, x0, t, num_steps)
     return jax.vmap(forward_fn)
 
 
