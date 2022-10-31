@@ -160,6 +160,6 @@ class TransformerDiffusion(hk.Module):
 
 def make_diffusion_fn(model_config, training):
     def fn(x, t):
-        pred = TransformerDiffusion(model_config, training)
+        pred = TransformerDiffusion(model_config, training)(x, t)
         return pred
     return fn
