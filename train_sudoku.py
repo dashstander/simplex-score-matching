@@ -115,7 +115,7 @@ def setup_forward_diffusion(config, key):
 
 
 def main(args):
-    config = Config().load(args.config)
+    config = Config().from_disk(args.config)
     wandb.init(
         project="simplex-score-matching",
         entity="dstander",
