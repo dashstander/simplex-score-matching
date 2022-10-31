@@ -85,7 +85,7 @@ def make_optimizer(config):
         init_value=config['init_lr'],
         peak_value=config['peak_lr'],
         warmup_steps=config['warmup_steps'],
-        decay_steps=config['optimizer.decay_steps'] + config['warmup_steps'],
+        decay_steps=config['decay_steps'] + config['warmup_steps'],
         end_value=config['lr'],
     )
     base_opt = optax.chain(
