@@ -184,7 +184,7 @@ def main(args):
         return params, opt_state
 
     try:
-        for epoch in trange(config.data.epochs):
+        for epoch in trange(config['data']['epochs']):
             tqdm.write(f'Epoch {epoch}')
             key, subkey = jax.random.split(key)
             params, opt_state = train_epoch(params, opt_state, epoch, subkey)
