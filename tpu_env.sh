@@ -16,3 +16,5 @@ pip install -r requirements.txt
 git clone https://github.com/dashstander/geomstats.git
 
 GEOMSTATS_BACKEND=jax pip install ./geomstats
+
+pip install -e .
