@@ -151,15 +151,19 @@ def main(args):
 
     #dataset_size = train_data.shape[0]
     if local_rank == 0:
-        print(f'Initialized model with {tree_size(params)} parameters, taking up {tree_bytes(params)/1e9}GB')
+        print(f'Initialized model with {hk.tree_size(params)} parameters, taking up {hk.tree_bytes(params)/1e9}GB')
     
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
+    batch_size = config['data']['batch_size']
 
     def train_epoch(params, opt_state, epoch, key):
         executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
-        data_iterator = executor.map(make_batch, jax.random.split(data_key, 50_000))
+        data_iterator = executor.map(
+            lambda x: make_batch(x, batch_size),
+            jax.random.split(data_key, 50_000)
+        )
         epoch_losses = []
         for i, batch in tqdm(enumerate(data_iterator), total=50_000):
             puzzles, masks = batch
