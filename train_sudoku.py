@@ -42,6 +42,12 @@ def wandb_log(data):
         wandb.log(data)
 
 
+def normalize(x, axis=-1, keepdims=True):
+    norms = jnp.sum(x**2, axis=axis, keepdims=keepdims)
+    normalized = x / norms
+    return jnp.nan_to_num(normalized)
+
+
 def save_checkpoint(checkpoint_dir, params, opt_state, epoch, steps, key):
     if jax.process_index() == 0:
         ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
@@ -62,12 +68,12 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         batch_size, seq_len, manif_dim = x0.shape
         t = jax.random.uniform(time_key, (batch_size,))       
         noised_x, target_score = grw_fn(x0, t, split_and_stack(grw_key, batch_size))
-        target_score = target_score / jnp.sum(target_score ** 2, axis=-1, keepdims=True)
+        target_score = normalize(target_score)
         pred_score = model.apply(params, model_key, noised_x, t)
         not_masked = 1 - masks
         mse = jnp.square(pred_score - target_score) * not_masked
         loss = jnp.mean(mse)
-        jax.experimental.host_callback.id_print(loss, tap_with_device=True)
+        #jax.experimental.host_callback.id_print(loss, tap_with_device=True)
         return 
 
     def train_step(params, opt_state, key, inputs, masks):
