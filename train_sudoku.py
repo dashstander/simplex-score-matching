@@ -71,7 +71,7 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
     def train_step(params, opt_state, key, inputs, masks):
         loss_grads = jax.value_and_grad(loss_fn)(params,inputs, masks, key)
         loss, grads = jax.lax.pmean(loss_grads, axis_name=axis_name)
-        updates, opt_state = opt.update(grads, opt_state)
+        updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return loss, params, opt_state
     
