@@ -60,19 +60,6 @@ def split_and_stack(rng, size):
 
 
 
-def tree_size(tree) -> int:
-    """ Stolen shamelessly from Haiku 
-    """
-    return sum(x.size for x in jax.tree_leaves(tree))
-
-
-def tree_bytes(tree) -> int:
-    """ Stolen shamelessly from Haiku 
-    """
-    return sum(x.size * x.dtype.itemsize for x in jax.tree_leaves(tree))
-
-
-
 
 @partial(jax.pmap, in_axes=(0, 0, None))
 def ema_update(params, averaged_params, decay):
