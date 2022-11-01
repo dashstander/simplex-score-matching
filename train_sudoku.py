@@ -96,9 +96,9 @@ def make_optimizer(config):
     return base_opt
 
 def setup_model(config, key):
-    batch_size = config['data']['batch_size']
-    x_shape = (batch_size, 81, 9)
-    t_shape = (batch_size,)
+    #batch_size = config['data']['batch_size']
+    x_shape = (1, 81, 9)
+    t_shape = (1,)
     model_config = TransformerConfig(**config['model'])
     model = hk.transform(make_diffusion_fn(model_config, training=True))
     params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(t_shape))
