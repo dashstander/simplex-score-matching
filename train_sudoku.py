@@ -184,7 +184,9 @@ def main(args):
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
             if i % 5 == 0:
-                batch_log['model/gradients'] = jax.tree_util.tree_map(wandb.Histogram, grads.unfreeze())
+                batch_log['model/gradients'] = jax.tree_util.tree_map(
+                    wandb.Histogram, hk.to_mutable_dict(grads)
+                )
             wandb_log(batch_log)
             del batch_log
             if i % 1000 == 0:
