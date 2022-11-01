@@ -22,8 +22,6 @@ from ssm.manifolds import make_sudoku_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
     split_and_stack,
-    tree_bytes,
-    tree_size,
     unreplicate   
 )
 from ssm.models.model import TransformerConfig, make_diffusion_fn
@@ -42,7 +40,7 @@ p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 def wandb_log(data):
     if jax.process_index() == 0:
         wandb.log(data)
-    return
+
 
 def save_checkpoint(
     checkpoint_dir,
@@ -52,18 +50,17 @@ def save_checkpoint(
     steps,
     key
 ):
-    if jax.process_index() != 0:
-        return
-    ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
-    obj = {
-        'params': unreplicate(params),
-        #'params_ema': unreplicate(params_ema),
-        'opt_state': unreplicate(opt_state),
-        'epoch': epoch,
-        'key': key
-    }
-    with open(ckpt_path, 'wb') as f:
-        pickle.dump(obj, f)
+    if jax.process_index() == 0:
+        ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
+        obj = {
+            'params': unreplicate(params),
+            #'params_ema': unreplicate(params_ema),
+            'opt_state': unreplicate(opt_state),
+            'epoch': epoch,
+            'key': key
+        }
+        with open(ckpt_path, 'wb') as f:
+            pickle.dump(obj, f)
 
 
 def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
