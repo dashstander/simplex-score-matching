@@ -7,6 +7,7 @@ import argparse
 from confection import Config
 from concurrent.futures import ThreadPoolExecutor
 import haiku as hk
+from haiku.data_structures import to_mutable_dict, tree_bytes, tree_size
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -152,8 +153,8 @@ def main(args):
     key = jax.random.split(key, num_processes)[local_rank]
 
     #dataset_size = train_data.shape[0]
-    num_params = hk.data_structures.tree_size(params)
-    num_bytes = hk.data_structures.tree_bytes(params)
+    num_params = tree_size(params)
+    num_bytes = tree_bytes(params)
     if local_rank == 0:
         print(f'Initialized model with {num_params} parameters, taking up {num_bytes/1e9}GB')
     
@@ -185,7 +186,7 @@ def main(args):
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
             if i % 5 == 0:
                 batch_log['model/gradients'] = jax.tree_util.tree_map(
-                    wandb.Histogram, hk.to_mutable_dict(grads)
+                    wandb.Histogram, to_mutable_dict(grads)
                 )
             wandb_log(batch_log)
             del batch_log
