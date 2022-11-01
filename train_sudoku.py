@@ -73,7 +73,7 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         loss, grads = jax.lax.pmean(loss_grads, axis_name=axis_name)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return loss, params, opt_state
+        return loss, grads, params, opt_state
     
     return jax.pmap(train_step, axis_name=axis_name)
 
@@ -174,7 +174,9 @@ def main(args):
             local_keys = split_and_stack(subkey, num_local_devices)
             puzzles = psplit(puzzles, num_local_devices)
             masks = psplit(masks, num_local_devices)
-            loss, grads = train_step_fn(params, opt_state, local_keys, puzzles, masks)
+            loss, grads, params, opt_state = train_step_fn(
+                params, opt_state, local_keys, puzzles, masks
+            )
             batch_end = time.time()
             single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
