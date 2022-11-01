@@ -42,9 +42,16 @@ p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 def wandb_log(data):
     if jax.process_index() == 0:
         wandb.log(data)
+    return
 
-
-def save_checkpoint(checkpoint_dir, params, opt_state, epoch, steps, key):
+def save_checkpoint(
+    checkpoint_dir,
+    params,
+    opt_state,
+    epoch,
+    steps,
+    key
+):
     if jax.process_index() != 0:
         return
     ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
