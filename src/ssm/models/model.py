@@ -87,7 +87,7 @@ class AttentionBlock(hk.Module):
     def __call__(self, x, dropout: float = 1.):
         x = hk.dropout(hk.next_rng_key(), dropout * self.dropout_rate, x)
         x = self.ln(x)
-        attn = self.mha(x, x, x)
+        return self.mha(x, x, x)
 
 
 class FeedForward(hk.Module):
