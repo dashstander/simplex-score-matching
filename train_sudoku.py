@@ -183,6 +183,8 @@ def main(args):
             single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
+            if i % 5 == 0:
+                batch_log['model/gradients'] = jax.tree_util.tree_map(wandb.Histogram, grads.unfreeze())
             wandb_log(batch_log)
             del batch_log
             if i % 1000 == 0:
@@ -194,8 +196,8 @@ def main(args):
         return params, opt_state
 
     try:
-        for epoch in trange(config['data']['epochs']):
-            tqdm.write(f'Epoch {epoch}')
+        for epoch in range(config['data']['epochs']):
+            print(f'############### Epoch {epoch}\n', '###################################')
             key, subkey = jax.random.split(key)
             params, opt_state = train_epoch(params, opt_state, epoch, subkey)
     except KeyboardInterrupt:
