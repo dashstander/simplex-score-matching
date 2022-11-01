@@ -42,19 +42,13 @@ def wandb_log(data):
         wandb.log(data)
 
 
-def save_checkpoint(
-    checkpoint_dir,
-    params,
-    opt_state,
-    epoch,
-    steps,
+def save_checkpoint(checkpoint_dir, params, opt_state, epoch, steps,
     key
 ):
     if jax.process_index() == 0:
         ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
         obj = {
             'params': unreplicate(params),
-            #'params_ema': unreplicate(params_ema),
             'opt_state': unreplicate(opt_state),
             'epoch': epoch,
             'key': key
