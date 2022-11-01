@@ -25,12 +25,14 @@ class TransformerConfig:
 LayerNorm = partial(hk.LayerNorm, create_scale=True, create_offset=True, axis=-1)
 
 
-def normalize_probabilities(x):
-    logx = jnp.log1p(x)
-    x_mean0 = logx - jnp.mean(logx, axis=-1, keepdims=True)
-    x_normalized = x_mean0 / jnp.var(x_mean0, axis=-1, keepdims=True)
-    return x_normalized
+def squared_norm(x, axis=-1, keepdims=False):
+    return jnp.sum(x**2, axis=axis, keepdims=keepdims)
 
+
+def normalize(x, axis=-1, keepdims=True):
+    norms = squared_norm(x, axis=axis, keepdims=keepdims)
+    normalized = x / norms
+    return jnp.nan_to_num(normalized)
 
 def rotate_every_two(x):
     x1 = x[:, :, :, 0::2]
@@ -154,7 +156,7 @@ class TransformerDiffusion(hk.Module):
             trans_x = layer(trans_x, self.dropout)
         x = x + jnp.sqrt(2) * trans_x
         x = self.linear1(x)
-        return jax.nn.normalize(x, axis=-1)
+        return normalize(x, axis=-1)
 
 
 

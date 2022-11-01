@@ -24,7 +24,7 @@ from ssm.utils import (
     split_and_stack,
     unreplicate   
 )
-from ssm.models.model import TransformerConfig, make_diffusion_fn
+from ssm.models.model import TransformerConfig, make_diffusion_fn, normalize
 
 
 p = argparse.ArgumentParser()
@@ -40,12 +40,6 @@ p.add_argument('--checkpoint-dir', type=str, default='checkpoints')
 def wandb_log(data):
     if jax.process_index() == 0:
         wandb.log(data)
-
-
-def normalize(x, axis=-1, keepdims=True):
-    norms = jnp.sum(x**2, axis=axis, keepdims=keepdims)
-    normalized = x / norms
-    return jnp.nan_to_num(normalized)
 
 
 def save_checkpoint(checkpoint_dir, params, opt_state, epoch, steps, key):
