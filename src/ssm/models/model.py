@@ -103,7 +103,7 @@ class FeedForward(hk.Module):
         x = hk.dropout(
             hk.next_rng_key(),
             dropout * self.dropout_rate,
-            x
+            x # TODO: somehow _this_ is getting passed in as a TransformerConfig
         )
         x = self.ln(x)
         x = self.dense_in(x)
@@ -148,7 +148,7 @@ class TransformerDiffusion(hk.Module):
         timestep_embed = self.fourier(t[:, None])
         te_planes = jnp.tile(timestep_embed[:, None], (1, self.config.max_length, 1))
         x = jnp.concatenate([x_init, te_planes], axis=-1)
-        x = self.ff1(self.config)(x, self.dropout)
+        x = self.ff1(x, self.dropout)
         trans_x = x
         for layer in self.transformers:
             trans_x = layer(trans_x, self.dropout)
