@@ -185,7 +185,7 @@ def main(args):
             del batch_log
             if i % 1000 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
-                save_checkpoint(checkpoint_dir, params, opt_state, epoch, i)
+                save_checkpoint(checkpoint_dir, params, opt_state, epoch, i, key)
         epoch_loss = np.mean(epoch_losses)
         
         wandb_log({'epoch/loss': epoch_loss})
