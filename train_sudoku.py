@@ -2,8 +2,7 @@ import os
 os.environ['GEOMSTATS_BACKEND'] = 'jax'
 # ~17GB
 os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
-from jax.config import config as jaxconfig
-jaxconfig.update("jax_debug_nans", True)
+
 import argparse
 from confection import Config
 from concurrent.futures import ThreadPoolExecutor

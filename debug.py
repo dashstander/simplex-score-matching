@@ -2,7 +2,8 @@ import os
 os.environ['GEOMSTATS_BACKEND'] = 'jax'
 # ~17GB
 os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
-
+from jax.config import config as jaxconfig
+jaxconfig.update("jax_debug_nans", True)
 import argparse
 from confection import Config
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +73,8 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         pred_score = model.apply(params, model_key, noised_x, t)
         not_masked = 1 - masks
         mse = jnp.square(pred_score - target_score) * not_masked
+        print(f'pred nan: {jnp.any(jnp.isnan(pred_score))}')
+        print(f'target nan: {jnp.any(jnp.isnan(target_score))}')
         print(f'MSE nan: {jnp.any(jnp.isnan(mse))}')
         loss = jnp.mean(mse)
         print(loss)
