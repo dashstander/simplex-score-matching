@@ -186,12 +186,14 @@ def main(args):
                 params, opt_state, subkey, puzzles, masks
             )
             batch_end = time.time()
+            flat_grads = jax.tree_util.tree_flatten(grads)
+            jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), flat_grads[0])
             #single_loss = unreplicate(loss)
             batch_log = {'train/loss': loss, 'train/time': batch_end - batch_start}
             wandb_log(batch_log)
             del batch_log
             if i % 1000 == 0:
-                tqdm.write(f'Batch {i}, loss {single_loss:g}')
+                tqdm.write(f'Batch {i}, loss {loss:g}')
                 save_checkpoint(checkpoint_dir, params, opt_state, epoch, i, key)
         epoch_loss = np.mean(epoch_losses)
         
