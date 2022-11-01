@@ -66,7 +66,9 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         pred_score = model.apply(params, model_key, noised_x, t)
         not_masked = 1 - masks
         mse = jnp.square(pred_score - target_score) * not_masked
-        return jnp.mean(mse)
+        loss = jnp.mean(mse)
+        jax.experimental.host_callback.id_print(loss, tap_with_device=True)
+        return 
 
     def train_step(params, opt_state, key, inputs, masks):
         loss_grads = jax.value_and_grad(loss_fn)(params,inputs, masks, key)
