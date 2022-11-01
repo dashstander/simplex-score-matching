@@ -81,12 +81,13 @@ class AttentionBlock(hk.Module):
             self.config.model_dim,
             w_init = hk.initializers.RandomNormal()
         )
+
         self.dropout_rate = self.config.attention_dropout
 
     def __call__(self, x, dropout: float = 1.):
         x = hk.dropout(hk.next_rng_key(), dropout * self.dropout_rate, x)
         x = self.ln(x)
-        return self.mha(x, x, x)
+        attn = self.mha(x, x, x)
 
 
 class FeedForward(hk.Module):
@@ -119,15 +120,14 @@ class TransformerLayer(hk.Module):
         self.transformer = AttentionBlock(config)
         self.ff = FeedForward(config)
 
-    def __call__(self, x, dropout: float = 1.):
+    def __call__(self, x0, dropout: float = 1.):
         #x_rot = x[:, :, :self.d_rotary]
         #x_pass = x[ :, :, self.d_rotary:]
         #sincos = fixed_pos_embedding(x_rot, seq_dim=1)
         #x_rot = apply_rotary_pos_emb(x_rot, sincos)
         #x = jnp.concatenate([x_rot, x_pass], axis=-1)
-        x = x + self.transformer(x, dropout)
-        x = x + self.ff(x)
-        return x
+        x = self.transformer(x0, dropout)
+        return x0 + self.ff(x)
 
 
 class TransformerDiffusion(hk.Module):
