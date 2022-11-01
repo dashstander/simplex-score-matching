@@ -82,7 +82,7 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         return loss
 
     def train_step(params, opt_state, key, inputs, masks):
-        loss, grads = jax.value_and_grad(loss_fn)(params,inputs, masks, key)
+        loss, grads = jax.value_and_grad(loss_fn)(params, inputs, masks, key)
         #loss, grads = jax.lax.pmean(loss_grads, axis_name=axis_name)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
@@ -191,9 +191,9 @@ def main(args):
                 params, opt_state, subkey, puzzles, masks
             )
             batch_end = time.time()
-            single_loss = unreplicate(loss)
+            #single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
-            batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
+            batch_log = {'train/loss': loss, 'train/time': batch_end - batch_start}
             wandb_log(batch_log)
             del batch_log
             if i % 1000 == 0:
