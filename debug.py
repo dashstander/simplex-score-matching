@@ -192,7 +192,6 @@ def main(args):
             )
             batch_end = time.time()
             #single_loss = unreplicate(loss)
-            epoch_losses.append(single_loss)
             batch_log = {'train/loss': loss, 'train/time': batch_end - batch_start}
             wandb_log(batch_log)
             del batch_log
