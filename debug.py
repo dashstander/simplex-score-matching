@@ -72,7 +72,6 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         print(f'target nan: {jnp.any(jnp.isnan(target_score))}')
         print(f'MSE nan: {jnp.any(jnp.isnan(mse))}')
         loss = jnp.mean(mse)
-        print(loss)
         #jax.experimental.host_callback.id_print(loss, tap_with_device=True)
         return loss
 
@@ -187,7 +186,8 @@ def main(args):
             )
             batch_end = time.time()
             flat_grads = jax.tree_util.tree_flatten(grads)
-            jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), flat_grads[0])
+            grad_nans = jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), flat_grads[0])
+            print(grad_nans)
             #single_loss = unreplicate(loss)
             batch_log = {'train/loss': loss, 'train/time': batch_end - batch_start}
             wandb_log(batch_log)
