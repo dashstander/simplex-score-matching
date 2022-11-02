@@ -182,7 +182,7 @@ def main(args):
             batch_end = time.time()
             single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
-            print(jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), grads))
+            #print(jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), grads))
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
             if i % 5 == 0:
                 batch_log['model/gradients'] = to_mutable_dict(grads)
