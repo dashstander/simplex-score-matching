@@ -183,10 +183,23 @@ class HypersphereProductManifold(hk.Module):
 
 class HypersphereProductForwardGeodesicRandomWalk(hk.Module):
 
-    def __init__(self, hypersphere_dim: int, mul: int, num_steps: int):
+    def __init__(self, hypersphere_dim: int, mul: int, num_steps: int, beta_0: float, beta_f: float):
         super().__init__()
         self.manifold = HypersphereProductManifold(hypersphere_dim - 1, mul)
         self.num_steps = num_steps
+        self.beta_0 = beta_0
+        self.beta_f = beta_f
+
+    @property
+    def shape_extrinsic(self):
+        return (self.manifold.mul, self.manifold.base_embedding_dim)
+
+    def beta_t(self, t):
+        normed_t = (t - self.t0) / (self.tf - self.t0)
+        return self.beta_0 + normed_t * (self.beta_f - self.beta_0)
+
+    def rescale_t(self, t):
+        return 0.5 * t**2 * (self.beta_f - self.beta_0) + t * self.beta_0
 
     def grad_marginal_log_prob(self, x0, x, t):
         logp_grad = self.manifold.grad_log_heat_kernel(x, x0, t, jnp.array(0.))
@@ -195,15 +208,15 @@ class HypersphereProductForwardGeodesicRandomWalk(hk.Module):
     def __call__(self, x0, t):
         step_size = step_size = t / self.num_steps
         gamma = jnp.sqrt(step_size)
-        def _step(base_point, random_vec):
-            tangent_rv = gamma * self.manifold.to_tangent(random_vec, base_point)
+        hk.reserve_rng_keys(self.num_steps)
+        def _step(base_point, t):
+            noise = jax.random.normal(hk.next_rng_key(), self.shape_extrinsic)
+            sigma_t = jnp.sqrt(self.beta_t(t))
+            tangent_rv = sigma_t * gamma * self.manifold.to_tangent(noise, base_point)
             point = self.manifold.exp(tangent_rv, base_point)
             return point, point
-        rvs = jax.random.normal(
-            hk.next_rng_key(),
-            (self.num_steps, self.manifold.mul, self.manifold.base_embedding_dim)
-        )
-        return hk.scan(_step, x0, rvs)
+        times = jnp.linspace(0., t, self.num_steps)
+        return hk.scan(_step, x0, times)
 
 
 class DebugHypersphereProductForwardGeodesicRandomWalk(hk.Module):
@@ -220,8 +233,8 @@ class DebugHypersphereProductForwardGeodesicRandomWalk(hk.Module):
     def __call__(self, x0, t):
         step_size = step_size = t / self.num_steps
         gamma = jnp.sqrt(step_size)
-        def _step(base_point, random_vec):
-            tangent_rv = gamma * self.manifold.to_tangent(random_vec, base_point)
+        def _step(base_point, noise):
+            tangent_rv = gamma * self.manifold.to_tangent(noise, base_point)
             point = self.manifold.exp(tangent_rv, base_point)
             return point, point
         x = x0
@@ -246,7 +259,6 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
     @property
     def shape_extrinsic(self):
         return (self.manifold.mul, self.manifold.base_embedding_dim)
-
 
     def __call__(self, x_final, mask, t_final):
         step_size = step_size = t_final / self.num_steps
