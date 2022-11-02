@@ -195,8 +195,8 @@ class HypersphereProductForwardGeodesicRandomWalk(hk.Module):
         return (self.manifold.mul, self.manifold.base_embedding_dim)
 
     def beta_t(self, t):
-        normed_t = (t - self.t0) / (self.tf - self.t0)
-        return self.beta_0 + normed_t * (self.beta_f - self.beta_0)
+        #normed_t = (t - self.t0) / (self.tf - self.t0)
+        return self.beta_0 + t * (self.beta_f - self.beta_0)
 
     def rescale_t(self, t):
         return 0.5 * t**2 * (self.beta_f - self.beta_0) + t * self.beta_0
