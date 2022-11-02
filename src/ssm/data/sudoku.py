@@ -14,8 +14,9 @@ class FlatSudoku:
 
     def to_tensor(self):
         return jax.nn.one_hot(
-            jnp.array(self.solution.board).ravel(),
-            num_classes=self.size
+            jnp.array(self.solution.board).ravel() - 1,
+            num_classes=self.size,
+            dtype=jnp.int32
         ).astype(jnp.float32)
 
     @classmethod
@@ -38,7 +39,6 @@ def generate_masks(rng, batch_size, min_given=0.1, max_given=0.8):
 
 def get_puzzle(seed):
     return FlatSudoku.make_puzzle(seed).solution_tensor
-
 
 
 def make_puzzles(rng, batch_size):
