@@ -2,8 +2,8 @@ import os
 os.environ['GEOMSTATS_BACKEND'] = 'jax'
 # ~17GB
 os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
-#from jax.config import config as jaxconfig
-#jaxconfig.update("jax_debug_nans", True)
+from jax.config import config as jaxconfig
+jaxconfig.update("jax_debug_nans", True)
 import argparse
 from confection import Config
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +19,7 @@ from tqdm import tqdm, trange
 import wandb
 
 from ssm.data.sudoku import make_batch
-from ssm.manifolds import make_sudoku_forward_walker, make_sudoku_solver
+from ssm.manifolds import make_sudoku_forward_walker, debug_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
     split_and_stack,
@@ -113,7 +113,7 @@ def setup_model(config, key):
 
 
 def setup_forward_diffusion(config, key):
-    diffusion = hk.transform(make_sudoku_forward_walker)
+    diffusion = hk.transform(debug_forward_walker)
     x_init = jnp.full((81, 9), 1./3)
     t_init = jnp.array(2.)
     num_steps = config['sde']['num_steps']

@@ -206,6 +206,34 @@ class HypersphereProductForwardGeodesicRandomWalk(hk.Module):
         return hk.scan(_step, x0, rvs)
 
 
+class DebugHypersphereProductForwardGeodesicRandomWalk(hk.Module):
+
+    def __init__(self, hypersphere_dim: int, mul: int, num_steps: int):
+        super().__init__()
+        self.manifold = HypersphereProductManifold(hypersphere_dim - 1, mul)
+        self.num_steps = num_steps
+
+    def grad_marginal_log_prob(self, x0, x, t):
+        logp_grad = self.manifold.grad_log_heat_kernel(x, x0, t, jnp.array(0.))
+        return logp_grad
+
+    def __call__(self, x0, t):
+        step_size = step_size = t / self.num_steps
+        gamma = jnp.sqrt(step_size)
+        def _step(base_point, random_vec):
+            tangent_rv = gamma * self.manifold.to_tangent(random_vec, base_point)
+            point = self.manifold.exp(tangent_rv, base_point)
+            return point, point
+        x = x0
+        for i in range(self.num_steps):
+            rv = jax.random.normal(
+                hk.next_rng_key(),
+                (self.manifold.mul, self.manifold.base_embedding_dim)
+            )
+            x, _ = _step(x, rv)
+        return x
+
+
 
 class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
 
@@ -239,6 +267,13 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
 def make_sudoku_forward_walker(x0, t_final, num_steps):
     manifold_random_walker = HypersphereProductForwardGeodesicRandomWalk(9, 81, num_steps)
     xt, _ = manifold_random_walker(x0, t_final)
+    grad_log_prob = manifold_random_walker.grad_marginal_log_prob(x0, xt, t_final)
+    return xt, grad_log_prob
+
+
+def debug_forward_walker(x0, t_final, num_steps):
+    manifold_random_walker = HypersphereProductForwardGeodesicRandomWalk(9, 81, num_steps)
+    xt = manifold_random_walker(x0, t_final)
     grad_log_prob = manifold_random_walker.grad_marginal_log_prob(x0, xt, t_final)
     return xt, grad_log_prob
 
