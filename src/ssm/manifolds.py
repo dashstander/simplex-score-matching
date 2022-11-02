@@ -272,7 +272,7 @@ def make_sudoku_forward_walker(x0, t_final, num_steps):
 
 
 def debug_forward_walker(x0, t_final, num_steps):
-    manifold_random_walker = HypersphereProductForwardGeodesicRandomWalk(9, 81, num_steps)
+    manifold_random_walker = DebugHypersphereProductForwardGeodesicRandomWalk(9, 81, num_steps)
     xt = manifold_random_walker(x0, t_final)
     grad_log_prob = manifold_random_walker.grad_marginal_log_prob(x0, xt, t_final)
     return xt, grad_log_prob
