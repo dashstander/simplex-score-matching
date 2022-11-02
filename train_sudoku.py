@@ -116,7 +116,7 @@ def setup_forward_diffusion(config, key):
     beta_f = config['sde']['beta_f']
     diff_params = diffusion.init(key, x_init, t_init, num_steps, beta_0, beta_f)
     def forward_fn(x0, t, rng):
-        return diffusion.apply(diff_params, rng, x0, t, num_steps)
+        return diffusion.apply(diff_params, rng, x0, t, num_steps, beta_0, beta_f)
     return jax.vmap(forward_fn)
 
 
