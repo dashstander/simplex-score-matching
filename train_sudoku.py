@@ -166,34 +166,29 @@ def setup_model(config, key):
 
 
 def setup_forward_diffusion(config, key):
-    diffusion = hk.transform(make_sudoku_forward_walker)
-    x_init = jnp.full((81, 9), 1./3)
-    t_init = jnp.array(2.)
     num_steps = config['sde']['num_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
-    diff_params = diffusion.init(key, x_init, t_init, num_steps, beta_0, beta_f)
+    diffusion = hk.transform(make_sudoku_forward_walker(num_steps, beta_0, beta_f))
+    x_init = jnp.full((81, 9), 1./3)
+    t_init = jnp.array(2.)
+    diff_params = diffusion.init(key, x_init, t_init)
     def forward_fn(x0, t, rng):
-        return diffusion.apply(diff_params, rng, x0, t, num_steps, beta_0, beta_f)
-    return jax.vmap(forward_fn)
+        return diffusion.apply(diff_params, rng, x0, t)
+    return forward_fn
 
 def make_solver(config, model, params, num_steps, key):
+    num_steps = config['sde']['num_steps']
+    beta_0 = config['sde']['beta_0']
+    beta_f = config['sde']['beta_f']
     x_init = jnp.full((1, 81, 9), 1./3)
     t_init = jnp.array([2., 2.])
     def score_fn(rng, x, masks, time):
         return model.apply(params, rng, x, masks, time)
-    solver = hk.transform(make_sudoku_solver)
-    solver_params = solver.init(key, x_init, x_init, t_init, score_fn, 100)
+    solver = hk.transform(make_sudoku_solver(score_fn, num_steps, beta_0, beta_f))
+    solver_params = solver.init(key, x_init, x_init, t_init)
     def _solve(x, mask, t, key):
-        return solver.apply(
-            solver_params,
-            key,
-            x,
-            mask,
-            t,
-            score_fn,
-            num_steps
-        )
+        return solver.apply(solver_params, key, x, mask, t)
     return jax.pmap(_solve, axis_name='batch')
 
 

@@ -218,7 +218,7 @@ class HypersphereProductForwardGeodesicRandomWalk(hk.Module):
         times = jnp.linspace(0., t, self.num_steps)
         return hk.scan(_step, x0, times)
 
-
+"""
 class DebugHypersphereProductForwardGeodesicRandomWalk(hk.Module):
 
     def __init__(self, hypersphere_dim: int, mul: int, num_steps: int):
@@ -245,20 +245,26 @@ class DebugHypersphereProductForwardGeodesicRandomWalk(hk.Module):
             )
             x, _ = _step(x, rv)
         return x
-
+"""
 
 
 class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
 
-    def __init__(self, dim: int, mul: int, num_steps: int, score_fn):
+    def __init__(self, dim: int, mul: int, num_steps: int, score_fn, beta_0, beta_f):
         super().__init__()
         self.manifold = HypersphereProductManifold(dim - 1, mul)
         self.num_steps = num_steps
         self.score_fn = score_fn
+        self.beta_0 = beta_0
+        self.beta_f = beta_f
     
     @property
     def shape_extrinsic(self):
         return (self.manifold.mul, self.manifold.base_embedding_dim)
+
+    def beta_t(self, t):
+        #normed_t = (t - self.t0) / (self.tf - self.t0)
+        return self.beta_0 + t * (self.beta_f - self.beta_0)
 
     def __call__(self, x_final, mask, t_final):
         step_size = step_size = t_final / self.num_steps
@@ -266,7 +272,8 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
         hk.reserve_rng_keys(self.num_steps * 2)
         def _step(base_point, t):
             random_vec = jax.random.normal(hk.next_rng_key(), self.shape_extrinsic)
-            tangent_rv = gamma * self.manifold.to_tangent(random_vec, base_point)
+            sigma_t = jnp.sqrt(self.beta_t(t))
+            tangent_rv = sigma_t * gamma * self.manifold.to_tangent(random_vec, base_point)
             drift_term = step_size * self.score_fn(hk.get_next_rng_key(), base_point, mask, t)
             point = self.manifold.exp(drift_term + tangent_rv, base_point)
             point = jnp.where(mask, base_point, point)
@@ -276,11 +283,14 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
         return x0, path
 
 
-def make_sudoku_forward_walker(x0, t_final, num_steps, beta_0, beta_f):
+def make_sudoku_forward_walker(num_steps, beta_0, beta_f):
     manifold_random_walker = HypersphereProductForwardGeodesicRandomWalk(9, 81, num_steps, beta_0, beta_f)
-    xt, _ = manifold_random_walker(x0, t_final)
-    grad_log_prob = manifold_random_walker.grad_marginal_log_prob(x0, xt, t_final)
-    return xt, grad_log_prob
+    def walker(x0, t_final):
+        xt, _ = manifold_random_walker(x0, t_final)
+        grad_log_prob = manifold_random_walker.grad_marginal_log_prob(x0, xt, t_final)
+        return xt, grad_log_prob
+    return hk.vmap(walker, split_rng=True)
+    
 
 
 def debug_forward_walker(x0, t_final, num_steps):
@@ -290,9 +300,11 @@ def debug_forward_walker(x0, t_final, num_steps):
     return xt, grad_log_prob
 
 
-def make_sudoku_solver(x_final, mask, t_final, score_fn, num_steps):
-    manifold_random_walker = (
-        HypersphereProductBackwardGeodesicRandomWalk(9, 81, num_steps, score_fn)
+def make_sudoku_solver(score_fn, num_steps, beta_0, beta_f):
+    manifold_rw = (
+        HypersphereProductBackwardGeodesicRandomWalk(9, 81, num_steps, score_fn, beta_0, beta_f)
     )
-    x0, _ = hk.vmap(manifold_random_walker, split_rng=True)(x_final, mask, t_final)
-    return x0
+    def walker(x_final, mask, t_final):
+        x0, _ = manifold_rw(x_final, mask, t_final)
+        return x0
+    return hk.vmap(walker, split_rng=True)
