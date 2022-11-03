@@ -105,7 +105,7 @@ def calc_val_metrics(predicted, solutions, masks):
     return pcnt_correct_puzzles, pcnt_correct_vals
 
 
-def do_validation(config, model, params, num_steps, key):
+def do_validation(config, model, params, key):
     num_local_devices = jax.local_device_count()
     batch_size = config['data']['batch_size']
     num_batches = config['data']['num_val_batches']
@@ -266,6 +266,9 @@ def main(args):
             if i % 1000 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, opt_state, epoch, i, key)
+                key, subkey = jax.random.split(key)
+                val_log = do_validation(config, model, params, subkey)
+                wandb_log(val_log)
         epoch_loss = np.mean(epoch_losses)
         
         wandb_log({'epoch/loss': epoch_loss})
