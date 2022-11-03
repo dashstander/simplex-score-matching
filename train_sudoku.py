@@ -15,7 +15,7 @@ import optax
 from pathlib import Path
 import pickle
 import time
-from tqdm import tqdm, trange
+from tqdm import tqdm
 import wandb
 
 from ssm.data.sudoku import make_batch
@@ -80,6 +80,64 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
     return jax.pmap(train_step, axis_name=axis_name)
 
 
+def load_val_data(config):
+    batch_size = config['data']['batch_size']
+    num_val_samples = batch_size * config['data']['num_val_batches']
+    val_fp = config['data']['val_path']
+    data = np.load(val_fp)
+    puzzles, masks = data['puzzles'], data['masks']
+    puzzles = jax.nn.one_hot(puzzles - 1, num_classes=9)
+    masks = jnp.asarray(masks, dtype=jnp.int32)[..., None]
+    return puzzles[:num_val_samples], masks[:num_val_samples]
+
+def puzzle_random_init(solutions, masks, key):
+    rv = jax.random.normal(key, solutions.shape)
+    rv = normalize(jnp.abs(rv))
+    return solutions * masks + (1 - masks) * rv
+
+def calc_val_metrics(predicted, solutions, masks):
+    not_masked = 1 - masks
+    correct = predicted == solutions
+    num_correct_vals = 1. * jnp.sum(correct * not_masked)
+    num_correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
+    pcnt_correct_puzzles =  num_correct_puzzles / predicted.shape[0]
+    pcnt_correct_vals = num_correct_vals / not_masked.sum()
+    return pcnt_correct_puzzles, pcnt_correct_vals
+
+
+def do_validation(config, model, params, num_steps, key):
+    num_local_devices = jax.local_device_count()
+    batch_size = config['data']['batch_size']
+    num_batches = config['data']['num_val_batches']
+    val_start = time.time()
+    key, subkey = jax.random.split(key)
+    solve_fn = make_solver(model, params, num_steps, subkey)
+    pcnt_solved_puzzles = []
+    pcnt_correct_vals = []
+    val_puzzles, val_masks = load_val_data(config)
+    val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
+    for solutions, masks in val_data:
+        batch_size = puzzles.shape[0]
+        key, puzzle_key, solve_key = jax.random.split(key, 3)
+        puzzles = puzzle_random_init(solutions, masks, puzzle_key)
+        puzzles = psplit(puzzles, num_local_devices)
+        masks = psplit(masks, num_local_devices)
+        solve_keys = split_and_stack(solve_key, num_local_devices)
+        preds = solve_fn(puzzles, masks, jnp.ones((batch_size,)), solve_keys)
+        pred_puzzle = jnp.argmax(preds, axis=-1) + 1
+        batch_correct_puzzles, batch_correct_vals = calc_val_metrics(pred_puzzle, solutions, masks)
+        pcnt_solved_puzzles.append(batch_correct_puzzles)
+        pcnt_correct_vals.append(batch_correct_vals)
+    val_time = time.time() - val_start
+    val_accuracy = jnp.array(pcnt_correct_vals).mean()
+    puzzle_accuracy = jnp.array(pcnt_solved_puzzles).mean()
+    return {
+        'validation/value_accuracy': val_accuracy,
+        'validation/puzzle_accuracy': puzzle_accuracy,
+        'val/time': val_time
+    }
+
+
 def make_optimizer(config):
 
     schedule = optax.warmup_cosine_decay_schedule(
@@ -118,6 +176,25 @@ def setup_forward_diffusion(config, key):
     def forward_fn(x0, t, rng):
         return diffusion.apply(diff_params, rng, x0, t, num_steps, beta_0, beta_f)
     return jax.vmap(forward_fn)
+
+def make_solver(config, model, params, num_steps, key):
+    x_init = jnp.full((1, 81, 9), 1./3)
+    t_init = jnp.array([2., 2.])
+    def score_fn(rng, x, masks, time):
+        return model.apply(params, rng, x, masks, time)
+    solver = hk.transform(make_sudoku_solver)
+    solver_params = solver.init(key, x_init, x_init, t_init, score_fn, 100)
+    def _solve(x, mask, t, key):
+        return solver.apply(
+            solver_params,
+            key,
+            x,
+            mask,
+            t,
+            score_fn,
+            num_steps
+        )
+    return jax.pmap(_solve, axis_name='batch')
 
 
 def main(args):
@@ -201,7 +278,7 @@ def main(args):
 
     try:
         for epoch in range(config['data']['epochs']):
-            print(f'############### Epoch {epoch}\n', '###################################')
+            print(f'############### Epoch {epoch}\n###################################')
             key, subkey = jax.random.split(key)
             params, opt_state = train_epoch(params, opt_state, epoch, subkey)
     except KeyboardInterrupt:

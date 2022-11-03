@@ -263,11 +263,11 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
     def __call__(self, x_final, mask, t_final):
         step_size = step_size = t_final / self.num_steps
         gamma = jnp.sqrt(step_size)
-        hk.reserve_rng_keys(self.num_steps)
+        hk.reserve_rng_keys(self.num_steps * 2)
         def _step(base_point, t):
             random_vec = jax.random.normal(hk.next_rng_key(), self.shape_extrinsic)
             tangent_rv = gamma * self.manifold.to_tangent(random_vec, base_point)
-            drift_term = step_size * self.score_fn(base_point, mask, t)
+            drift_term = step_size * self.score_fn(hk.get_next_rng_key(), base_point, mask, t)
             point = self.manifold.exp(drift_term + tangent_rv, base_point)
             point = jnp.where(mask, base_point, point)
             return point, point
@@ -294,8 +294,5 @@ def make_sudoku_solver(x_final, mask, t_final, score_fn, num_steps):
     manifold_random_walker = (
         HypersphereProductBackwardGeodesicRandomWalk(9, 81, num_steps, score_fn)
     )
-    x0, _ = manifold_random_walker(x_final, mask, t_final)
+    x0, _ = hk.vmap(manifold_random_walker, split_rng=True)(x_final, mask, t_final)
     return x0
-
-
-
