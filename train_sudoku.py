@@ -111,7 +111,7 @@ def do_validation(config, model, params, key):
     num_batches = config['data']['num_val_batches']
     val_start = time.time()
     key, subkey = jax.random.split(key)
-    solve_fn = make_solver(model, params, subkey)
+    solve_fn = make_solver(config, model, params, subkey)
     pcnt_solved_puzzles = []
     pcnt_correct_vals = []
     val_puzzles, val_masks = load_val_data(config)
@@ -177,7 +177,7 @@ def setup_forward_diffusion(config, key):
         return diffusion.apply(diff_params, rng, x0, t)
     return forward_fn
 
-def make_solver(config, model, params, num_steps, key):
+def make_solver(config, model, params, key):
     num_steps = config['sde']['num_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
