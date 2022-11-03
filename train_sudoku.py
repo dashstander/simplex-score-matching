@@ -182,7 +182,7 @@ def make_solver(config, model, params, key):
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
     x_init = jnp.full((1, 81, 9), 1./3)
-    t_init = jnp.array([2., 2.])
+    t_init = jnp.array(1.)
     def score_fn(rng, x, masks, time):
         return model.apply(params, rng, x, masks, time)
     solver = hk.transform(make_sudoku_solver(score_fn, num_steps, beta_0, beta_f))
