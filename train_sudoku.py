@@ -111,7 +111,7 @@ def do_validation(config, model, params, num_steps, key):
     num_batches = config['data']['num_val_batches']
     val_start = time.time()
     key, subkey = jax.random.split(key)
-    solve_fn = make_solver(model, params, num_steps, subkey)
+    solve_fn = make_solver(model, params, subkey)
     pcnt_solved_puzzles = []
     pcnt_correct_vals = []
     val_puzzles, val_masks = load_val_data(config)
