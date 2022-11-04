@@ -5,6 +5,7 @@ os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
 
 import argparse
 from confection import Config
+import copy
 from concurrent.futures import ThreadPoolExecutor
 import haiku as hk
 from haiku.data_structures import to_mutable_dict, tree_bytes, tree_size
@@ -178,7 +179,8 @@ def setup_model(config, key):
     #batch_size = config['data']['batch_size']
     x_shape = (1, 81, 9)
     t_shape = (1,)
-    model_config = config['model']
+    model_config = copy.deepcopy(config['model'])
+    model_config.pop('ema_decay')
     transformer_config = TransformerConfig(**model_config['transformer'])
     model = hk.transform(make_diffusion_fn(transformer_config, training=True))
     params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(t_shape))
@@ -256,7 +258,7 @@ def main(args):
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
-    ema_decay = config['model']['ema']['alpha']
+    ema_decay = config['model']['ema_decay']
     ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
     _, ema_state = ema_fn.init(None, params)
     ema_params, ema_state = ema_fn.apply(None, ema_state, None, params)
