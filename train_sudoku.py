@@ -59,7 +59,7 @@ def save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, steps,
             pickle.dump(blob, f)
 
 
-def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
+def make_forward_fn(model, ema_update, opt, grw_fn, axis_name='batch'):
 
     def loss_fn(params, x0, masks, key):
         time_key, grw_key, model_key = jax.random.split(key, 3)
@@ -75,12 +75,14 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
         loss = jnp.mean(mse)
         return loss
 
-    def train_step(params, opt_state, key, inputs, masks):
+    def train_step(params, ema_state, opt_state, key, inputs, masks):
         loss_grads = jax.value_and_grad(loss_fn)(params,inputs, masks, key)
         loss, grads = jax.lax.pmean(loss_grads, axis_name=axis_name)
         updates, opt_state = opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return loss, grads, params, opt_state
+        ema_params, ema_state = ema_update.apply(None, ema_state, None, params)
+
+        return loss, grads, params, ema_params, ema_state, opt_state
     
     return jax.pmap(train_step, axis_name=axis_name)
 
@@ -248,8 +250,6 @@ def main(args):
     train_step_fn = make_forward_fn(model, opt, forward_diffusion_fn)
 
     key = jax.random.split(key, num_processes)[local_rank]
-
-    #dataset_size = train_data.shape[0]
     num_params = tree_size(params)
     num_bytes = tree_bytes(params)
     if local_rank == 0:
@@ -261,7 +261,7 @@ def main(args):
     ema_decay = config['model']['ema_decay']
     ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
     _, ema_state = ema_fn.init(None, params)
-    ema_params, ema_state = ema_fn.apply(None, ema_state, None, params)
+    
 
     def train_epoch(params, ema_state, opt_state, epoch, key):
         executor = ThreadPoolExecutor(max_workers=10)
@@ -278,10 +278,9 @@ def main(args):
             local_keys = split_and_stack(subkey, num_local_devices)
             puzzles = psplit(puzzles, num_local_devices)
             masks = psplit(masks, num_local_devices)
-            loss, grads, params, opt_state = train_step_fn(
-                params, opt_state, local_keys, puzzles, masks
+            loss, grads, params, ema_params, ema_state, opt_state = train_step_fn(
+                params, ema_state, opt_state, local_keys, puzzles, masks
             )
-            ema_params, ema_state = ema_fn.apply(None, ema_state, None, params)
             batch_end = time.time()
             single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
@@ -308,7 +307,9 @@ def main(args):
         for epoch in range(config['data']['epochs']):
             print(f'############### Epoch {epoch}\n###################################')
             key, subkey = jax.random.split(key)
-            params, opt_state = train_epoch(params, ema_state, opt_state, epoch, subkey)
+            params, ema_state, opt_state = train_epoch(
+                params, ema_state, opt_state, epoch, subkey
+            )
     except KeyboardInterrupt:
         pass
 
