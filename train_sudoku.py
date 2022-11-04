@@ -22,6 +22,7 @@ from ssm.data.sudoku import make_batch
 from ssm.manifolds import make_sudoku_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
+    punsplit,
     split_and_stack,
     unreplicate   
 )
@@ -125,7 +126,8 @@ def do_validation(config, model, params, key):
         final_time = psplit( jnp.ones((batch_size,)), num_local_devices)
         solve_keys = split_and_stack(solve_key, num_local_devices)
         preds = solve_fn(puzzles, masks, final_time, solve_keys)
-        pred_puzzle = jnp.argmax(preds, axis=-1) + 1
+        pred_puzzle = punsplit(jnp.argmax(preds, axis=-1) + 1)
+        solutions = jnp.argmax(solutions, axis=-1) + 1
         batch_correct_puzzles, batch_correct_vals = calc_val_metrics(pred_puzzle, solutions, masks)
         pcnt_solved_puzzles.append(batch_correct_puzzles)
         pcnt_correct_vals.append(batch_correct_vals)
