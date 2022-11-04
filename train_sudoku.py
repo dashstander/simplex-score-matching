@@ -246,8 +246,9 @@ def main(args):
     
     #if args.resume:
     #    train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
-
-    train_step_fn = make_forward_fn(model, opt, forward_diffusion_fn)
+    ema_decay = config['model']['ema_decay']
+    ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
+    train_step_fn = make_forward_fn(model, ema_fn, opt, forward_diffusion_fn)
 
     key = jax.random.split(key, num_processes)[local_rank]
     num_params = tree_size(params)
@@ -258,8 +259,6 @@ def main(args):
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
-    ema_decay = config['model']['ema_decay']
-    ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
     _, ema_state = ema_fn.init(None, params)
     
 
