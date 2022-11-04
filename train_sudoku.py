@@ -260,8 +260,8 @@ def main(args):
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
     _, ema_state = ema_fn.init(None, params)
+    ema_state = jax.device_put_replicated(ema_state, devices)
     
-
     def train_epoch(params, ema_state, opt_state, epoch, key):
         executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
