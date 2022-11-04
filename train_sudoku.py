@@ -117,7 +117,7 @@ def do_validation(config, model, params, key):
     val_puzzles, val_masks = load_val_data(config)
     val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
     for solutions, masks in val_data:
-        batch_size = puzzles.shape[0]
+        batch_size = solutions.shape[0]
         key, puzzle_key, solve_key = jax.random.split(key, 3)
         puzzles = puzzle_random_init(solutions, masks, puzzle_key)
         puzzles = psplit(puzzles, num_local_devices)
