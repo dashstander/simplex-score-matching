@@ -44,11 +44,12 @@ def wandb_log(data):
         wandb.log(data)
 
 
-def save_checkpoint(checkpoint_dir, params, opt_state, epoch, steps, key):
+def save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, steps, key):
     if jax.process_index() == 0:
         ckpt_path = checkpoint_dir / f'model_{epoch}_{steps}.pkl'
         blob = {
             'params': unreplicate(params),
+            'ema_params': unreplicate(ema_params),
             'opt_state': unreplicate(opt_state),
             'epoch': epoch,
             'key': key
@@ -62,7 +63,9 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
     def loss_fn(params, x0, masks, key):
         time_key, grw_key, model_key = jax.random.split(key, 3)
         batch_size, seq_len, manif_dim = x0.shape
-        t = jnp.cos(jax.random.uniform(time_key, (batch_size,)))
+        t = jnp.cos(
+            (jnp.pi / 2) * jax.random.uniform(time_key, (batch_size,))
+        )
         noised_x, target_score = grw_fn(x0, t, grw_key)
         target_score = normalize(target_score)
         pred_score = model.apply(params, model_key, noised_x, t)
@@ -175,8 +178,9 @@ def setup_model(config, key):
     #batch_size = config['data']['batch_size']
     x_shape = (1, 81, 9)
     t_shape = (1,)
-    model_config = TransformerConfig(**config['model'])
-    model = hk.transform(make_diffusion_fn(model_config, training=True))
+    model_config = config['model']
+    transformer_config = TransformerConfig(**model_config['transformer'])
+    model = hk.transform(make_diffusion_fn(transformer_config, training=True))
     params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(t_shape))
     opt = make_optimizer(config['optimizer'])
     opt_state = opt.init(params)
@@ -248,20 +252,24 @@ def main(args):
     num_bytes = tree_bytes(params)
     if local_rank == 0:
         print(f'Initialized model with {num_params} parameters, taking up {num_bytes/1e9}GB')
-    
+
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
+    ema_decay = config['model']['ema']['alpha']
+    ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
+    _, ema_state = ema_fn.init(None, params)
+    ema_params, ema_state = ema_fn.apply(None, ema_state, None, params)
 
     def train_epoch(params, opt_state, epoch, key):
         executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
         data_iterator = executor.map(
             lambda x: make_batch(x, batch_size),
-            jax.random.split(data_key, 50_000)
+            jax.random.split(data_key, 100_000)
         )
         epoch_losses = []
-        for i, batch in tqdm(enumerate(data_iterator), total=50_000):
+        for i, batch in tqdm(enumerate(data_iterator), total=100_000):
             puzzles, masks = batch
             batch_start = time.time()
             key, subkey = jax.random.split(key)
@@ -271,21 +279,21 @@ def main(args):
             loss, grads, params, opt_state = train_step_fn(
                 params, opt_state, local_keys, puzzles, masks
             )
+            ema_params, ema_state = ema_fn.apply(None, ema_state, None, params)
             batch_end = time.time()
             single_loss = unreplicate(loss)
             epoch_losses.append(single_loss)
-
             #print(jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), grads))
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
             #if i % 5 == 0:
             #    batch_log['model/gradients'] = to_mutable_dict(grads)
             wandb_log(batch_log)
             del batch_log
-            if i % 1000 == 0:
+            if i % 100 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
-                save_checkpoint(checkpoint_dir, params, opt_state, epoch, i, key)
+                save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
-                val_log = do_validation(config, model, unreplicate(params), subkey)
+                val_log = do_validation(config, model, unreplicate(ema_params), subkey)
                 for k, v in val_log.items():
                     print(f'{k}: {v}')
                 wandb_log(val_log)
