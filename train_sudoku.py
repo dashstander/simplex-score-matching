@@ -181,7 +181,7 @@ def setup_model(config, key):
     t_shape = (1,)
     model_config = copy.deepcopy(config['model'])
     model_config.pop('ema_decay')
-    transformer_config = TransformerConfig(**model_config['transformer'])
+    transformer_config = TransformerConfig(**model_config)
     model = hk.transform(make_diffusion_fn(transformer_config, training=True))
     params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(t_shape))
     opt = make_optimizer(config['optimizer'])
