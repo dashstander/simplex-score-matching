@@ -248,6 +248,7 @@ def main(args):
     #    train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
     ema_decay = config['model']['ema_decay']
     ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
+    _, ema_state = ema_fn.init(None, params)
     train_step_fn = make_forward_fn(model, ema_fn, opt, forward_diffusion_fn)
 
     key = jax.random.split(key, num_processes)[local_rank]
@@ -259,7 +260,6 @@ def main(args):
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
-    _, ema_state = ema_fn.init(None, params)
     ema_state = jax.device_put_replicated(ema_state, devices)
     
     def train_epoch(params, ema_state, opt_state, epoch, key):
@@ -293,7 +293,7 @@ def main(args):
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
-                val_log = do_validation(config, model, ema_params, subkey)
+                val_log = do_validation(config, model, unreplicate(ema_params), subkey)
                 for k, v in val_log.items():
                     print(f'{k}: {v}')
                 wandb_log(val_log)
