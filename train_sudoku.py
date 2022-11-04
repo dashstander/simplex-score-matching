@@ -267,7 +267,7 @@ def main(args):
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
-                val_log = do_validation(config, model, params, subkey)
+                val_log = do_validation(config, model, unreplicate(params), subkey)
                 wandb_log(val_log)
         epoch_loss = np.mean(epoch_losses)
         
