@@ -263,7 +263,7 @@ def main(args):
     _, ema_state = ema_fn.init(None, params)
     ema_params, ema_state = ema_fn.apply(None, ema_state, None, params)
 
-    def train_epoch(params, opt_state, epoch, key):
+    def train_epoch(params, ema_state, opt_state, epoch, key):
         executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
         data_iterator = executor.map(
@@ -302,13 +302,13 @@ def main(args):
         epoch_loss = np.mean(epoch_losses)
         
         wandb_log({'epoch/loss': epoch_loss})
-        return params, opt_state
+        return params, ema_state, opt_state
 
     try:
         for epoch in range(config['data']['epochs']):
             print(f'############### Epoch {epoch}\n###################################')
             key, subkey = jax.random.split(key)
-            params, opt_state = train_epoch(params, opt_state, epoch, subkey)
+            params, opt_state = train_epoch(params, ema_state, opt_state, epoch, subkey)
     except KeyboardInterrupt:
         pass
 
