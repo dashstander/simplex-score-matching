@@ -289,7 +289,7 @@ def main(args):
             #    batch_log['model/gradients'] = to_mutable_dict(grads)
             wandb_log(batch_log)
             del batch_log
-            if i % 100 == 0:
+            if i % 1000 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
