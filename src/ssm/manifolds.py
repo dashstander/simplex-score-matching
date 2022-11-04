@@ -275,6 +275,7 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
             sigma_t = jnp.sqrt(self.beta_t(t))
             tangent_rv = sigma_t * gamma * self.manifold.to_tangent(random_vec, base_point)
             drift_term = step_size * self.score_fn(hk.next_rng_key(), base_point[None], t[None])
+            drift_term = jnp.squeeze(drift_term)
             point = self.manifold.exp(drift_term + tangent_rv, base_point)
             point = jnp.where(mask, base_point, point)
             return point, point
