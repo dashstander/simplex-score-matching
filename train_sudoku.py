@@ -62,7 +62,7 @@ def make_forward_fn(model, opt, grw_fn, axis_name='batch'):
     def loss_fn(params, x0, masks, key):
         time_key, grw_key, model_key = jax.random.split(key, 3)
         batch_size, seq_len, manif_dim = x0.shape
-        t = jax.random.uniform(time_key, (batch_size,))       
+        t = jnp.cos(jax.random.uniform(time_key, (batch_size,)))
         noised_x, target_score = grw_fn(x0, t, grw_key)
         target_score = normalize(target_score)
         pred_score = model.apply(params, model_key, noised_x, t)
@@ -103,7 +103,12 @@ def calc_val_metrics(predicted, solutions, masks):
     num_correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
     pcnt_correct_puzzles =  num_correct_puzzles / predicted.shape[0]
     pcnt_correct_vals = num_correct_vals / not_masked.sum()
-    return pcnt_correct_puzzles, pcnt_correct_vals
+    return (
+        num_correct_puzzles,
+        pcnt_correct_puzzles,
+        num_correct_vals,
+        pcnt_correct_vals
+    )
 
 
 def do_validation(config, model, params, key):
@@ -113,7 +118,9 @@ def do_validation(config, model, params, key):
     val_start = time.time()
     key, subkey = jax.random.split(key)
     solve_fn = make_solver(config, model, params, subkey)
+    num_solved_puzzles = []
     pcnt_solved_puzzles = []
+    num_correct_vals = []
     pcnt_correct_vals = []
     val_puzzles, val_masks = load_val_data(config)
     val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
@@ -129,13 +136,20 @@ def do_validation(config, model, params, key):
         pred_puzzle = punsplit(jnp.argmax(preds, axis=-1) + 1)
         solutions = jnp.argmax(solutions, axis=-1) + 1
         masks = punsplit(jnp.squeeze(masks))
-        batch_correct_puzzles, batch_correct_vals = calc_val_metrics(pred_puzzle, solutions, masks)
-        pcnt_solved_puzzles.append(batch_correct_puzzles)
-        pcnt_correct_vals.append(batch_correct_vals)
+        metrics = calc_val_metrics(pred_puzzle, solutions, masks)
+        batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc = metrics
+        num_solved_puzzles.append(batch_correct_puzzles)
+        pcnt_solved_puzzles.append(batch_puzzle_acc)
+        num_correct_vals.append(batch_correct_vals)
+        pcnt_correct_vals.append(batch_val_acc)
     val_time = time.time() - val_start
+    num_vals = jnp.array(num_correct_vals).sum()
     val_accuracy = jnp.array(pcnt_correct_vals).mean()
+    num_puzzles = jnp.array(num_solved_puzzles).sum()
     puzzle_accuracy = jnp.array(pcnt_solved_puzzles).mean()
     return {
+        'validation/num_correct_values': num_vals,
+        'validation/num_solved_puzzles': num_puzzles,
         'validation/value_accuracy': val_accuracy,
         'validation/puzzle_accuracy': puzzle_accuracy,
         'val/time': val_time
@@ -272,6 +286,8 @@ def main(args):
                 save_checkpoint(checkpoint_dir, params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
                 val_log = do_validation(config, model, unreplicate(params), subkey)
+                for k, v in val_log.items():
+                    print(f'{k}: {v}')
                 wandb_log(val_log)
         epoch_loss = np.mean(epoch_losses)
         
