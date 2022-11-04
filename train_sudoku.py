@@ -128,6 +128,7 @@ def do_validation(config, model, params, key):
         preds = solve_fn(puzzles, masks, final_time, solve_keys)
         pred_puzzle = punsplit(jnp.argmax(preds, axis=-1) + 1)
         solutions = jnp.argmax(solutions, axis=-1) + 1
+        masks = punsplit(jnp.squeeze(masks))
         batch_correct_puzzles, batch_correct_vals = calc_val_metrics(pred_puzzle, solutions, masks)
         pcnt_solved_puzzles.append(batch_correct_puzzles)
         pcnt_correct_vals.append(batch_correct_vals)
