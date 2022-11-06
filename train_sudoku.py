@@ -19,7 +19,7 @@ import time
 from tqdm import tqdm
 import wandb
 
-from ssm.data.sudoku import make_batch
+from ssm.data.sudoku import make_data_loader
 from ssm.manifolds import make_sudoku_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
@@ -86,16 +86,6 @@ def make_forward_fn(model, ema_update, opt, grw_fn, axis_name='batch'):
     return jax.pmap(train_step, axis_name=axis_name)
 
 
-def load_val_data(config):
-    batch_size = config['data']['batch_size']
-    num_val_samples = batch_size * config['data']['num_val_batches']
-    val_fp = config['data']['val_path']
-    data = np.load(val_fp)
-    puzzles, masks = data['puzzles'], data['masks']
-    puzzles = jax.nn.one_hot(puzzles - 1, num_classes=9)
-    masks = jnp.asarray(masks, dtype=jnp.int32)[..., None]
-    return puzzles[:num_val_samples], masks[:num_val_samples]
-
 def puzzle_random_init(solutions, masks, key):
     rv = jax.random.normal(key, solutions.shape)
     rv = normalize(jnp.abs(rv))
@@ -121,15 +111,15 @@ def do_validation(config, model, params, key):
     batch_size = config['data']['batch_size']
     num_batches = config['data']['num_val_batches']
     val_start = time.time()
-    key, subkey = jax.random.split(key)
-    solve_fn = make_solver(config, model, params, subkey)
+    key, subkey1, subkey2 = jax.random.split(key, 3)
+    solve_fn = make_solver(config, model, params, subkey1)
     num_solved_puzzles = []
     pcnt_solved_puzzles = []
     num_correct_vals = []
     pcnt_correct_vals = []
-    val_puzzles, val_masks = load_val_data(config)
-    val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
-    for solutions, masks in val_data:
+    loader = make_data_loader(config, subkey2, training=False)
+    #val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
+    for solutions, masks in loader:
         batch_size = solutions.shape[0]
         key, puzzle_key, solve_key = jax.random.split(key, 3)
         puzzles = puzzle_random_init(solutions, masks, puzzle_key)
@@ -190,7 +180,7 @@ def setup_model(config, key):
 
 
 def setup_forward_diffusion(config, key):
-    num_steps = config['sde']['num_steps']
+    num_steps = config['sde']['num_fwd_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
     diffusion = hk.transform(make_sudoku_forward_walker(num_steps, beta_0, beta_f))
@@ -202,7 +192,7 @@ def setup_forward_diffusion(config, key):
     return forward_fn
 
 def make_solver(config, model, params, key):
-    num_steps = config['sde']['num_steps']
+    num_steps = config['sde']['num_bwd_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
     cfg_weight = config['sde']['weight']
@@ -269,16 +259,15 @@ def main(args):
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
     ema_state = jax.device_put_replicated(ema_state, devices)
+
+    total_size = (1_000_000 - config['data']['num_val_batches'] * batch_size) // batch_size
     
     def train_epoch(params, ema_state, opt_state, epoch, key):
-        executor = ThreadPoolExecutor(max_workers=10)
+        #executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
-        data_iterator = executor.map(
-            lambda x: make_batch(x, batch_size),
-            jax.random.split(data_key, 100_000)
-        )
+        loader = make_data_loader(config, data_key, training=True) 
         epoch_losses = []
-        for i, batch in tqdm(enumerate(data_iterator), total=100_000):
+        for i, batch in tqdm(enumerate(loader), total=total_size):
             puzzles, masks = batch
             batch_start = time.time()
             key, subkey = jax.random.split(key)
