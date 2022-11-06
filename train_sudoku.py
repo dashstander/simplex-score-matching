@@ -91,8 +91,8 @@ def puzzle_random_init(solutions, masks, key):
     rv = normalize(jnp.abs(rv))
     return solutions * masks + (1 - masks) * rv
 
-def calc_val_metrics(predicted, solutions, masks):
-    not_masked = 1 - masks
+def calc_val_metrics(predicted, solutions, masked):
+    not_masked = 1 - masked
     correct = predicted == solutions
     num_correct_vals = 1. * jnp.sum(correct * not_masked)
     num_correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
@@ -109,7 +109,7 @@ def calc_val_metrics(predicted, solutions, masks):
 def do_validation(config, params, key):
     num_local_devices = jax.local_device_count()
     batch_size = config['data']['batch_size']
-    num_batches = config['data']['num_val_batches']
+    #num_batches = config['data']['num_val_batches']
     val_start = time.time()
     key, subkey1, subkey2 = jax.random.split(key, 3)
     solve_fn = make_solver(config, params, subkey1)
@@ -130,8 +130,8 @@ def do_validation(config, params, key):
         preds = solve_fn(puzzles, masks, final_time, solve_keys)
         pred_puzzle = punsplit(jnp.argmax(preds, axis=-1) + 1)
         solutions = jnp.argmax(solutions, axis=-1) + 1
-        masks = punsplit(jnp.squeeze(masks))
-        metrics = calc_val_metrics(pred_puzzle, solutions, masks)
+        masked = punsplit(jnp.max(masks, axis=-1))
+        metrics = calc_val_metrics(pred_puzzle, solutions, masked)
         batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc = metrics
         num_solved_puzzles.append(batch_correct_puzzles)
         pcnt_solved_puzzles.append(batch_puzzle_acc)
