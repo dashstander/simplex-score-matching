@@ -195,7 +195,7 @@ def make_solver(config, params, key):
     num_steps = config['sde']['num_bwd_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
-    cfg_weight = config['sde']['weight']
+    cfg_weight = config['sde']['cfg_weight']
     model_config = copy.deepcopy(config['model'])
     model_config.pop('ema_decay')
     transformer_config = TransformerConfig(**model_config)
