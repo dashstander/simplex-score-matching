@@ -50,6 +50,7 @@ def make_data_loader(config, rng_key, training=True):
         num_splits = data_config['num_val_batches']
     for batch_indices in jnp.array_split(indices, num_splits):
         if len(batch_indices) != batch_size:
+            print(f'Batch has size {len(batch_indices)} not {batch_size}')
             continue
         key, subkey = jax.random.split(key)
         batch = data['puzzles'][batch_indices] - 1

@@ -273,6 +273,7 @@ def main(args):
         epoch_losses = []
         for i, batch in tqdm(enumerate(loader), total=total_size):
             puzzles, masks = batch
+            print(puzzles.shape)
             batch_start = time.time()
             key, subkey = jax.random.split(key)
             local_keys = split_and_stack(subkey, num_local_devices)
