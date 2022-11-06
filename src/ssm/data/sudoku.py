@@ -33,7 +33,29 @@ def generate_masks(rng, batch_size):
     return masks * cfg_mask
 
 
-def make_data_loader(config, rng_key, training=True):
+def make_train_loader(config, rng_key):
+    key, subkey = jax.random.split(rng_key)
+    data_config = config['data']
+    batch_size = data_config['batch_size']
+    num_train_batches = data_config['num_train_batches']
+    num_validation = data_config['num_val_batches'] * batch_size
+    data_fp = data_config['data_path']
+    data = np.load(data_fp, mmap_mode='r')
+    data_size = data['puzzles'].shape[0]
+    train_size = data_size - num_validation
+   
+    for _ in range(num_train_batches):
+        key, sk1, sk2 = jax.random.split(key, 3)
+        batch_indices = jax.random.choice(sk1, train_size, (batch_size,))
+        batch = data['puzzles'][batch_indices] - 1
+        masks = generate_masks(sk2, batch_size)
+        #givens = batch * masks
+        puzzles = jax.nn.one_hot(batch, num_classes=9)
+        givens = puzzles * masks[..., None]
+        yield puzzles, givens
+
+
+def make_val_loader(config, rng_key):
     key, subkey = jax.random.split(rng_key)
     data_config = config['data']
     batch_size = data_config['batch_size']
@@ -42,22 +64,15 @@ def make_data_loader(config, rng_key, training=True):
     data = np.load(data_fp, mmap_mode='r')
     data_size = data['puzzles'].shape[0]
     train_size = data_size - num_validation
-    if training:
-        indices = jax.random.permutation(subkey, train_size)
-        splits = jnp.arange(batch_size, train_size, batch_size)
-    else:
-        indices = np.arange(train_size, data_size)
-        splits = data_config['num_val_batches']
+    indices = np.arange(train_size, data_size)
+    splits = data_config['num_val_batches']
     for batch_indices in jnp.array_split(indices, splits):
         if len(batch_indices) != batch_size:
             #print(f'Batch has size {len(batch_indices)} not {batch_size}')
             continue
         key, subkey = jax.random.split(key)
         batch = data['puzzles'][batch_indices] - 1
-        if training:
-            masks = generate_masks(subkey, batch_size)
-        else:
-            masks = data['masks'][batch_indices]
+        masks = data['masks'][batch_indices]
         #givens = batch * masks
         puzzles = jax.nn.one_hot(batch, num_classes=9)
         givens = puzzles * masks[..., None]

@@ -6,7 +6,6 @@ os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
 import argparse
 from confection import Config
 import copy
-from concurrent.futures import ThreadPoolExecutor
 import haiku as hk
 from haiku.data_structures import to_mutable_dict, tree_bytes, tree_size
 import jax
@@ -19,7 +18,7 @@ import time
 from tqdm import tqdm
 import wandb
 
-from ssm.data.sudoku import make_data_loader
+from ssm.data.sudoku import make_train_loader, make_val_loader
 from ssm.manifolds import make_sudoku_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
@@ -117,7 +116,7 @@ def do_validation(config, params, key):
     pcnt_solved_puzzles = []
     num_correct_vals = []
     pcnt_correct_vals = []
-    loader = make_data_loader(config, subkey2, training=False)
+    loader = make_val_loader(config, subkey2)
     #val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
     for solutions, masks in loader:
         batch_size = solutions.shape[0]
@@ -263,13 +262,12 @@ def main(args):
     opt_state = jax.device_put_replicated(opt_state, devices)
     batch_size = config['data']['batch_size']
     ema_state = jax.device_put_replicated(ema_state, devices)
-
-    total_size = (1_000_000 - config['data']['num_val_batches'] * batch_size) // batch_size
+    total_size = config['data']['num_train_batches']
     
     def train_epoch(params, ema_state, opt_state, epoch, key):
         #executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
-        loader = make_data_loader(config, data_key, training=True) 
+        loader = make_train_loader(config, data_key) 
         epoch_losses = []
         for i, batch in tqdm(enumerate(loader), total=total_size):
             puzzles, masks = batch
