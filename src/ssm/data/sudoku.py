@@ -44,13 +44,13 @@ def make_data_loader(config, rng_key, training=True):
     train_size = data_size - num_validation
     if training:
         indices = jax.random.permutation(subkey, train_size)
-        num_splits = train_size // batch_size
+        splits = jnp.arange(batch_size, train_size, batch_size)
     else:
         indices = np.arange(train_size, data_size)
-        num_splits = data_config['num_val_batches']
-    for batch_indices in jnp.array_split(indices, num_splits):
+        splits = data_config['num_val_batches']
+    for batch_indices in jnp.array_split(indices, splits):
         if len(batch_indices) != batch_size:
-            print(f'Batch has size {len(batch_indices)} not {batch_size}')
+            #print(f'Batch has size {len(batch_indices)} not {batch_size}')
             continue
         key, subkey = jax.random.split(key)
         batch = data['puzzles'][batch_indices] - 1
