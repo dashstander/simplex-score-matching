@@ -173,7 +173,7 @@ def setup_model(config, key):
     model_config.pop('ema_decay')
     transformer_config = TransformerConfig(**model_config)
     model = hk.transform(make_diffusion_fn(transformer_config, training=True))
-    params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(t_shape))
+    params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(x_shape), jnp.zeros(t_shape))
     opt = make_optimizer(config['optimizer'])
     opt_state = opt.init(params)
     return model, params, opt, opt_state
@@ -191,11 +191,15 @@ def setup_forward_diffusion(config, key):
         return diffusion.apply(diff_params, rng, x0, t)
     return forward_fn
 
-def make_solver(config, model, params, key):
+def make_solver(config, params, key):
     num_steps = config['sde']['num_bwd_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
     cfg_weight = config['sde']['weight']
+    model_config = copy.deepcopy(config['model'])
+    model_config.pop('ema_decay')
+    transformer_config = TransformerConfig(**model_config)
+    model = hk.transform(make_diffusion_fn(transformer_config, training=False))
     x_init = jnp.full((2, 81, 9), 1./3)
     t_init = jnp.ones((2,))
     def score_fn(rng, x, mask, time):
