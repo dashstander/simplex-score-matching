@@ -155,7 +155,7 @@ class TransformerDiffusion(hk.Module):
         self.linear2 = hk.Linear(self.config.vocab_size)
 
     def __call__(self, xt, mask, t):
-        x = self.linear0(jnp.concatenate([xt, mask], axis=-2))
+        x = self.linear0(jnp.concatenate(xt + mask, axis=-2))
         timestep_embed = self.fourier(t[:, None])
         te_planes = jnp.tile(timestep_embed[:, None], (1, self.config.max_length, 1))
         x = jnp.concatenate([x, te_planes], axis=-1)
