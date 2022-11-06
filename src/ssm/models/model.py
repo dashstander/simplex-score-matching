@@ -29,6 +29,15 @@ def squared_norm(x, axis=-1, keepdims=False):
     return jnp.sum(x**2, axis=axis, keepdims=keepdims)
 
 
+def to_tangent(vector, base_point):
+    #inner_prod = jax.vmap(jax.vmap(jnp.dot))(base_point, vector)
+    inner_prod = jnp.einsum("...j,...j->...", vector, base_point)
+    coef = inner_prod / squared_norm(base_point)
+    tangent_vec = vector - jnp.einsum("...,...j->...j", coef, base_point)
+    return tangent_vec
+
+
+
 def normalize(x, axis=-1, keepdims=True):
     norms = squared_norm(x, axis=axis, keepdims=keepdims)
     normalized = x / norms
@@ -143,25 +152,26 @@ class TransformerDiffusion(hk.Module):
         self.ff1 = FeedForward(config)
         self.transformers = [TransformerLayer(self.config) for _ in range(self.config.num_layers)]
         self.linear1 = hk.Linear(self.config.vocab_size)
-        
+        self.linear2 = hk.Linear(self.config.vocab_size)
 
-    def __call__(self, x, t):
-        x_init = self.linear0(x)
+    def __call__(self, xt, mask, t):
+        x = self.linear0(jnp.concatenate([xt, mask], axis=-2))
         timestep_embed = self.fourier(t[:, None])
         te_planes = jnp.tile(timestep_embed[:, None], (1, self.config.max_length, 1))
-        x = jnp.concatenate([x_init, te_planes], axis=-1)
+        x = jnp.concatenate([x, te_planes], axis=-1)
         x = self.ff1(x, self.dropout)
         trans_x = x
         for layer in self.transformers:
             trans_x = layer(trans_x, self.dropout)
         x = x + jnp.sqrt(2) * trans_x
-        x = self.linear1(x)
-        return normalize(x, axis=-1)
-
+        x = self.linear1(x) + xt
+        x = self.linear2(x) + mask
+        vf = to_tangent(x, xt)
+        return normalize(vf, axis=-1)
 
 
 def make_diffusion_fn(model_config, training):
-    def fn(x, t):
-        pred = TransformerDiffusion(model_config, training)(x, t)
+    def fn(x, mask, t):
+        pred = TransformerDiffusion(model_config, training)(x, mask, t)
         return pred
     return fn

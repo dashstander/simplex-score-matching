@@ -63,15 +63,14 @@ def make_forward_fn(model, ema_update, opt, grw_fn, axis_name='batch'):
 
     def loss_fn(params, x0, masks, key):
         time_key, grw_key, model_key = jax.random.split(key, 3)
-        batch_size, seq_len, manif_dim = x0.shape
+        batch_size, _, _ = x0.shape
         t = jnp.cos(
             (jnp.pi / 2) * jax.random.uniform(time_key, (batch_size,))
         )
         noised_x, target_score = grw_fn(x0, t, grw_key)
         target_score = normalize(target_score)
-        pred_score = model.apply(params, model_key, noised_x, t)
-        not_masked = 1 - masks
-        mse = jnp.square(pred_score - target_score) * not_masked
+        pred_score = model.apply(params, model_key, noised_x, masks, t)
+        mse = jnp.square(pred_score - target_score)
         loss = jnp.mean(mse)
         return loss
 
@@ -178,7 +177,6 @@ def make_optimizer(config):
     return base_opt
 
 def setup_model(config, key):
-    #batch_size = config['data']['batch_size']
     x_shape = (1, 81, 9)
     t_shape = (1,)
     model_config = copy.deepcopy(config['model'])
@@ -207,10 +205,20 @@ def make_solver(config, model, params, key):
     num_steps = config['sde']['num_steps']
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
+    cfg_weight = config['sde']['weight']
     x_init = jnp.full((2, 81, 9), 1./3)
     t_init = jnp.ones((2,))
-    def score_fn(rng, x, time):
-        return model.apply(params, rng, x, time)
+    def score_fn(rng, x, mask, time):
+        k1, k2 = jax.random.split(rng)
+        x = x[None]
+        mask = mask[None]
+        time = time[None]
+        uncond_mask = jnp.zeros_like(mask)
+        # crowsonkb: i normally use the uncond-centered version which is w * eps(z, c) + (1 - w) * eps(z).  or uncond_score + w * (cond_score - uncond_score).
+        # so w=0 means uncond, w=1 means cond, -1 means negative cond, etc
+        uncond_score = model.apply(params, k1, x, uncond_mask, time)
+        cond_score = model.apply(params, k2, x, mask, time)
+        return cfg_weight * (cond_score) + (1 - cfg_weight) * uncond_score
     solver = hk.transform(make_sudoku_solver(score_fn, num_steps, beta_0, beta_f))
     solver_params = solver.init(key, x_init, x_init, t_init)
     def _solve(x, mask, t, key):
