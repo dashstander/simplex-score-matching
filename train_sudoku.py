@@ -106,13 +106,13 @@ def calc_val_metrics(predicted, solutions, masks):
     )
 
 
-def do_validation(config, model, params, key):
+def do_validation(config, params, key):
     num_local_devices = jax.local_device_count()
     batch_size = config['data']['batch_size']
     num_batches = config['data']['num_val_batches']
     val_start = time.time()
     key, subkey1, subkey2 = jax.random.split(key, 3)
-    solve_fn = make_solver(config, model, params, subkey1)
+    solve_fn = make_solver(config, params, subkey1)
     num_solved_puzzles = []
     pcnt_solved_puzzles = []
     num_correct_vals = []
@@ -273,7 +273,6 @@ def main(args):
         epoch_losses = []
         for i, batch in tqdm(enumerate(loader), total=total_size):
             puzzles, masks = batch
-            print(puzzles.shape)
             batch_start = time.time()
             key, subkey = jax.random.split(key)
             local_keys = split_and_stack(subkey, num_local_devices)
@@ -295,7 +294,7 @@ def main(args):
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
-                val_log = do_validation(config, model, unreplicate(ema_params), subkey)
+                val_log = do_validation(config, unreplicate(ema_params), subkey)
                 for k, v in val_log.items():
                     print(f'{k}: {v}')
                 wandb_log(val_log)
