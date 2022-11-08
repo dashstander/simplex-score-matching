@@ -95,7 +95,7 @@ def entropy(x, axis=-1):
     return -1. * jnp.sum(x * jnp.log(x), axis=axis)
 
 def calc_val_metrics(preds, solutions, masks):
-    ent = jnp.mean(entropy(preds ** 2, axis=-1), axis=-1)
+    ent = jnp.mean(entropy(punsplit(preds) ** 2, axis=-1), axis=-1)
     predicted = punsplit(jnp.argmax(preds, axis=-1) + 1)
     solutions = jnp.argmax(solutions, axis=-1) + 1
     masked = punsplit(jnp.max(masks, axis=-1))
@@ -138,7 +138,7 @@ def do_validation(config, params, key):
         solve_keys = split_and_stack(solve_key, num_local_devices)
         preds = solve_fn(puzzles, masks, final_time, solve_keys)
         
-        metrics = calc_val_metrics(pred_puzzle, solutions, masked)
+        metrics = calc_val_metrics(preds, solutions, masks)
         batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc = metrics
         num_solved_puzzles.append(batch_correct_puzzles)
         pcnt_solved_puzzles.append(batch_puzzle_acc)
