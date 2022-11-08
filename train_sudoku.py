@@ -90,7 +90,15 @@ def puzzle_random_init(solutions, masks, key):
     rv = normalize(jnp.abs(rv))
     return solutions * masks + (1 - masks) * rv
 
-def calc_val_metrics(predicted, solutions, masked):
+
+def entropy(x, axis=-1):
+    return -1. * jnp.sum(x * jnp.log(x), axis=axis)
+
+def calc_val_metrics(preds, solutions, masks):
+    ent = jnp.mean(entropy(preds ** 2, axis=-1), axis=-1)
+    predicted = punsplit(jnp.argmax(preds, axis=-1) + 1)
+    solutions = jnp.argmax(solutions, axis=-1) + 1
+    masked = punsplit(jnp.max(masks, axis=-1))
     not_masked = 1 - masked
     correct = predicted == solutions
     num_correct_vals = 1. * jnp.sum(correct * not_masked)
@@ -101,7 +109,8 @@ def calc_val_metrics(predicted, solutions, masked):
         num_correct_puzzles,
         pcnt_correct_puzzles,
         num_correct_vals,
-        pcnt_correct_vals
+        pcnt_correct_vals,
+        ent
     )
 
 
@@ -116,6 +125,7 @@ def do_validation(config, params, key):
     pcnt_solved_puzzles = []
     num_correct_vals = []
     pcnt_correct_vals = []
+    entropies = []
     loader = make_val_loader(config, subkey2)
     #val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
     for solutions, masks in loader:
@@ -127,9 +137,7 @@ def do_validation(config, params, key):
         final_time = psplit( jnp.ones((batch_size,)), num_local_devices)
         solve_keys = split_and_stack(solve_key, num_local_devices)
         preds = solve_fn(puzzles, masks, final_time, solve_keys)
-        pred_puzzle = punsplit(jnp.argmax(preds, axis=-1) + 1)
-        solutions = jnp.argmax(solutions, axis=-1) + 1
-        masked = punsplit(jnp.max(masks, axis=-1))
+        
         metrics = calc_val_metrics(pred_puzzle, solutions, masked)
         batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc = metrics
         num_solved_puzzles.append(batch_correct_puzzles)
@@ -141,12 +149,14 @@ def do_validation(config, params, key):
     val_accuracy = jnp.array(pcnt_correct_vals).mean()
     num_puzzles = jnp.array(num_solved_puzzles).sum()
     puzzle_accuracy = jnp.array(pcnt_solved_puzzles).mean()
+    all_entropies = jnp.concatenate(entropies)
     return {
         'validation/num_correct_values': num_vals,
         'validation/num_solved_puzzles': num_puzzles,
         'validation/value_accuracy': val_accuracy,
         'validation/puzzle_accuracy': puzzle_accuracy,
-        'val/time': val_time
+        'validation/entropy': all_entropies,
+        'validation/time': val_time
     }
 
 

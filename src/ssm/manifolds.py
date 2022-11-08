@@ -278,6 +278,7 @@ class HypersphereProductBackwardGeodesicRandomWalk(hk.Module):
             drift_term = jnp.squeeze(drift_term)
             point = self.manifold.exp(drift_term + tangent_rv, base_point)
             #point = jnp.where(mask, base_point, point)
+            point = jnp.abs(point)
             return point, point
         times = jnp.linspace(t_final, 0., self.num_steps)
         x0, path = hk.scan(_step, x_final, times)
@@ -289,7 +290,7 @@ def make_sudoku_forward_walker(num_steps, beta_0, beta_f):
         manifold_random_walker = HypersphereProductForwardGeodesicRandomWalk(9, 81, num_steps, beta_0, beta_f)
         xt, _ = manifold_random_walker(x0, t_final)
         grad_log_prob = manifold_random_walker.grad_marginal_log_prob(x0, xt, t_final)
-        return xt, grad_log_prob
+        return jnp.abs(xt), grad_log_prob
     return hk.vmap(walker, split_rng=True)
     
 
