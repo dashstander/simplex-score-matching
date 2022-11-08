@@ -137,13 +137,13 @@ def do_validation(config, params, key):
         final_time = psplit( jnp.ones((batch_size,)), num_local_devices)
         solve_keys = split_and_stack(solve_key, num_local_devices)
         preds = solve_fn(puzzles, masks, final_time, solve_keys)
-        
         metrics = calc_val_metrics(preds, solutions, masks)
-        batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc = metrics
+        batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc, batch_ent = metrics
         num_solved_puzzles.append(batch_correct_puzzles)
         pcnt_solved_puzzles.append(batch_puzzle_acc)
         num_correct_vals.append(batch_correct_vals)
         pcnt_correct_vals.append(batch_val_acc)
+        entropies.append(batch_ent)
     val_time = time.time() - val_start
     num_vals = jnp.array(num_correct_vals).sum()
     val_accuracy = jnp.array(pcnt_correct_vals).mean()
