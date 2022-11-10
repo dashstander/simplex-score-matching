@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from einops import rearrange, repeat
 from functools import partial
@@ -23,7 +24,7 @@ class TransformerConfig:
 
     @classmethod
     def from_config(cls, conf):
-        model_config = conf['model']
+        model_config = copy.deepcopy(conf['model'])
         if 'ema' in model_config:
             model_config.pop('ema')
         return cls(**model_config)
