@@ -21,6 +21,14 @@ class TransformerConfig:
     attention_dropout: float = 0.1
     fourier_init_std: float = 0.2
 
+    @classmethod
+    def from_config(cls, conf):
+        model_config = conf['model']
+        if 'ema' in model_config:
+            model_config.pop('ema')
+        return cls(**model_config)
+
+
 
 LayerNorm = partial(hk.LayerNorm, create_scale=True, create_offset=True, axis=-1)
 

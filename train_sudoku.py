@@ -177,9 +177,7 @@ def make_optimizer(config):
 def setup_model(config, key):
     x_shape = (1, 81, 9)
     t_shape = (1,)
-    model_config = copy.deepcopy(config['model'])
-    model_config.pop('ema_decay')
-    transformer_config = TransformerConfig(**model_config)
+    transformer_config = TransformerConfig.from_config(config)
     model = hk.transform(make_diffusion_fn(transformer_config, training=True))
     params = model.init(key, jnp.full(x_shape, 1/3.), jnp.zeros(x_shape), jnp.zeros(t_shape))
     opt = make_optimizer(config['optimizer'])
@@ -204,9 +202,7 @@ def make_solver(config, params, key):
     beta_0 = config['sde']['beta_0']
     beta_f = config['sde']['beta_f']
     cfg_weight = config['sde']['cfg_weight']
-    model_config = copy.deepcopy(config['model'])
-    model_config.pop('ema_decay')
-    transformer_config = TransformerConfig(**model_config)
+    transformer_config = TransformerConfig.from_config(config)
     model = hk.transform(make_diffusion_fn(transformer_config, training=False))
     x_init = jnp.full((2, 81, 9), 1./3)
     t_init = jnp.ones((2,))
@@ -256,8 +252,10 @@ def main(args):
     
     #if args.resume:
     #    train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
-    ema_decay = config['model']['ema_decay']
-    ema_fn = hk.transform_with_state(lambda x: hk.EMAParamsTree(ema_decay)(x))
+    ema_decay = config['model']['ema']['decay']
+    ema_warmup = config['model']['ema']['warmup']
+    ema_fn = hk.transform_with_state(
+        lambda x: hk.EMAParamsTree(ema_decay, warmup_length=ema_warmup)(x))
     _, ema_state = ema_fn.init(None, params)
     train_step_fn = make_forward_fn(model, ema_fn, opt, forward_diffusion_fn)
 
