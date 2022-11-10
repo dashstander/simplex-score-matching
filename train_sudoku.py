@@ -19,7 +19,7 @@ from tqdm import tqdm
 import wandb
 
 from ssm.data.sudoku import make_train_loader, make_val_loader
-from ssm.manifolds import make_sudoku_forward_walker, make_sudoku_solver
+from ssm.grw import make_sudoku_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
     punsplit,
@@ -67,7 +67,6 @@ def make_forward_fn(model, ema_update, opt, grw_fn, axis_name='batch'):
             (jnp.pi / 2) * jax.random.uniform(time_key, (batch_size,))
         )
         noised_x, target_score = grw_fn(x0, t, grw_key)
-        target_score = normalize(target_score)
         pred_score = model.apply(params, model_key, noised_x, masks, t)
         mse = jnp.square(pred_score - target_score)
         loss = jnp.mean(mse)

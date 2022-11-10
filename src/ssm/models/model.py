@@ -167,7 +167,7 @@ class TransformerDiffusion(hk.Module):
         x = self.linear1(x) + xt
         x = self.linear2(x) + mask
         vf = to_tangent(x, xt)
-        return normalize(vf, axis=-1)
+        return vf
 
 
 def make_diffusion_fn(model_config, training):
