@@ -5,7 +5,6 @@ os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
 
 import argparse
 from confection import Config
-import copy
 import haiku as hk
 from haiku.data_structures import to_mutable_dict, tree_bytes, tree_size
 import jax
@@ -254,8 +253,13 @@ def main(args):
     #    train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
     ema_decay = config['model']['ema']['decay']
     ema_warmup = config['model']['ema']['warmup']
+    zero_debias = ema_warmup == 0
     ema_fn = hk.transform_with_state(
-        lambda x: hk.EMAParamsTree(ema_decay, warmup_length=ema_warmup)(x))
+        lambda x: hk.EMAParamsTree(
+            ema_decay,
+            zero_debias=zero_debias,
+            warmup_length=ema_warmup
+        )(x))
     _, ema_state = ema_fn.init(None, params)
     train_step_fn = make_forward_fn(model, ema_fn, opt, forward_diffusion_fn)
 
