@@ -96,7 +96,7 @@ def make_train_loader(config, rng):
     train_size = data_size - num_validation
    
     for _ in range(num_train_batches):
-        rng, sk1, sk2, sk3 = jax.random.split(rng, 3)
+        rng, sk1, sk2, sk3 = jax.random.split(rng, 4)
         keys = split_and_stack(sk1, batch_size)
         batch_indices = jax.random.choice(sk2, train_size, (batch_size,))
         batch = data['puzzles'][batch_indices] - 1
