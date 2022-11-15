@@ -37,7 +37,10 @@ class HypersphereBackwardsSolver(to.Tree):
             batch_size = jnp.shape(base_point)[0]
             times = jnp.full((batch_size,), t)
             logits = self.score_fn(params, k1, base_point, mask, times)
-            pred = jax.random.categorical(k2, logits)
+            pred = jax.nn.one_hot(
+                jax.random.categorical(k2, logits),
+                num_classes=self.manifold.base_dim + 1
+            )
             drift_term = step_size * jax.vmap(self.manifold.log)(pred, base_point)
             point = jax.vmap(self.manifold.exp)(drift_term, base_point)
             point = jnp.abs(point)
