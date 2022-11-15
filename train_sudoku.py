@@ -178,7 +178,7 @@ def make_validation_fn(config):
             puzzles = psplit(puzzles, num_local_devices)
             masks = psplit(masks, num_local_devices)
             solve_keys = split_and_stack(solve_key, num_local_devices)
-            preds = solver(params, solve_keys, puzzles, masks)
+            preds, path = solver(params, solve_keys, puzzles, masks)
             #preds = punsplit(jax.device_put(preds), cpu_dev)
             validation_metrics(
                 preds,
