@@ -164,7 +164,7 @@ def make_validation_fn(config):
             masks = psplit(masks, num_local_devices)
             final_time = psplit(jnp.ones((batch_size,)), num_local_devices)
             solve_keys = split_and_stack(solve_key, num_local_devices)
-            preds = solver(puzzles, masks, final_time, params, solve_keys)
+            preds = solver(params, solve_keys, puzzles, masks, final_time)
             calc_val_metrics(
                 punsplit(preds),
                 punsplit(solutions),
