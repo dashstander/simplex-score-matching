@@ -3,6 +3,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import math
+import treeo as to
 
 
 def squared_norm(x, axis=-1, keepdims=False):
@@ -35,15 +36,13 @@ def make_gegenbauer_polynomials(alpha, l_max):
     return out_fn
 
 
-class Hypersphere(hk.Module):
+class Hypersphere(to.Tree):
+    dim: int = to.field(default=1, node=False)
+    c: float = to.field(default=1., node=False )
 
-    def __init__(self, dim, gegenbaur_num_approx=20):
-        super().__init__()
-        self.dim = dim
-        self.embedding_dim = dim + 1
-        self.c = 1.
-        self.nmax = gegenbaur_num_approx
-        self.gegenbaur_poly_fn = make_gegenbauer_polynomials((dim - 1) / 2, self.nmax)
+    def __init__(self, dim):
+        self.dim: int = dim
+        self.embedding_dim: int = dim + 1
 
     @property
     def injectivity_radius(self):
@@ -143,19 +142,21 @@ class Hypersphere(hk.Module):
         return grad
 
 
-class HypersphereProductManifold(hk.Module):
+class HypersphereProductManifold(to.Tree):
+    dim: int = to.field(default=1, node=False)
+    mul: int = to.field(default=2, node=False)
+    manifold: int = to.field(node=False)
 
     def __init__(self, dim: int, mul: int):
-        super().__init__()
-        self.base_dim = dim
-        self.mul = mul
-        self.base_embedding_dim = dim + 1
-        self.dim = dim * mul
-        self.embedding_dim = (dim + 1) * mul
+        self.base_dim: int = dim
+        self.mul: int = mul
+        self.base_embedding_dim: int = dim + 1
+        self.dim: int = dim * mul
+        self.embedding_dim: int = (dim + 1) * mul
         self.manifold = Hypersphere(dim)
     
     def to_tangent(self, vector, base_point):
-        return hk.vmap(self.manifold.to_tangent, split_rng=True)(vector, base_point)
+        return jax.vmap(self.manifold.to_tangent)(vector, base_point)
 
     def random_uniform(self, n_samples=1):
         shape = (n_samples, self.mul, self.base_embedding_dim)
@@ -166,7 +167,7 @@ class HypersphereProductManifold(hk.Module):
     def exp(self, vector, base_point):
         """ exp_{p}(v)
         """
-        return hk.vmap(self.manifold.exp, split_rng=True)(vector, base_point)
+        return jax.vmap(self.manifold.exp)(vector, base_point)
 
     def grad_log_heat_kernel(self, xt, xs, t, s):
         grad_heat_kernel = hk.vmap(
@@ -177,4 +178,4 @@ class HypersphereProductManifold(hk.Module):
         return grad_heat_kernel(xt, xs, t, s)
 
     def log(self, point, base_point):
-        return hk.vmap(self.manifold.log, split_rng=True)(point, base_point)
+        return jax.vmap(self.manifold.log)(point, base_point)

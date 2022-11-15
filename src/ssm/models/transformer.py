@@ -150,7 +150,7 @@ class TransformerLayer(hk.Module):
         return x0 + self.ff(x)
 
 
-class TransformerDiffusion(hk.Module):
+class DiffusionModel(hk.Module):
 
     def __init__(self, config: TransformerConfig, is_training: bool = True, name: str = None):
         super().__init__(name=name)
@@ -173,14 +173,13 @@ class TransformerDiffusion(hk.Module):
         for layer in self.transformers:
             trans_x = layer(trans_x, self.dropout)
         x = x + jnp.sqrt(2) * trans_x
-        x = self.linear1(x) + xt
-        x = self.linear2(x) + mask
-        vf = to_tangent(x, xt)
-        return vf
+        x = self.linear1(x) + xt + mask
+        x = self.linear2(x)
+        return jax.nn.normalize(x, axis=-1)
 
 
 def make_diffusion_fn(model_config, training):
     def fn(x, mask, t):
-        pred = TransformerDiffusion(model_config, training)(x, mask, t)
+        pred = DiffusionModel(model_config, training)(x, mask, t)
         return pred
     return fn
