@@ -122,18 +122,18 @@ def calc_val_metrics(preds, solutions, masks):
     correct = predicted == solutions
     correct_vals = 1. * jnp.sum(correct * not_masked)
     correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
-    batch_puzzle_pcnt =  correct_puzzles / predicted.shape[0]
+    #batch_puzzle_pcnt =  correct_puzzles / predicted.shape[0]
     batch_val_pcnt = correct_vals / not_masked.sum()
-    batch_unmasked_ent = jnp.mean(jnp.take(entropies, jnp.nonzero(not_masked)) , axis=-1)
-    batch_masked_ent = jnp.mean(jnp.take(entropies, jnp.nonzero(masked)) , axis=-1)
+    batch_unmasked_ent = jnp.sum(entropies * not_masked, axis=-1) / jnp.count_nonzero(not_masked)
+    batch_masked_ent = jnp.sum(entropies *masked , axis=-1) / jnp.count_nonzero(masked)
     return (
         correct_vals,
         correct_puzzles,
         batch_val_pcnt,
-        batch_puzzle_pcnt,
         batch_unmasked_ent,
         batch_masked_ent
     )
+
 
 def validation_metrics(
     preds,
@@ -146,9 +146,8 @@ def validation_metrics(
     masked_entropies,
     unmasked_entropies
 ):
-    nvals, npuzz, pcntval, pcntpuzz, unmaskent, maskent = calc_val_metrics(preds, solutions, masks)
+    nvals, npuzz, pcntval, unmaskent, maskent = calc_val_metrics(preds, solutions, masks)
     num_solved_puzzles.append(jax.lax.psum(npuzz, axis_name='batch'))
-    pcnt_solved_puzzles.append(jax.lax.pmean(pcntpuzz, axis_name='batch'))
     num_correct_vals.append(jax.lax.psum(nvals, axis_name='batch'))
     pcnt_correct_vals.append(jax.lax.pmean(pcntval, axis_name='batch'))
     masked_entropies.append(jax.lax.pmean(maskent, axis_name='batch'))
@@ -165,7 +164,6 @@ def make_validation_fn(config):
         key, subkey = jax.random.split(key)
         #solve_fn = make_solver(config, params, subkey1)
         num_solved_puzzles = []
-        pcnt_solved_puzzles = []
         num_correct_vals = []
         pcnt_correct_vals = []
         masked_entropies = []
@@ -185,7 +183,6 @@ def make_validation_fn(config):
                 psplit(solutions, num_local_devices),
                 masks,
                 num_solved_puzzles,
-                pcnt_solved_puzzles,
                 num_correct_vals,
                 pcnt_correct_vals,
                 masked_entropies,
@@ -195,7 +192,6 @@ def make_validation_fn(config):
         num_vals = jnp.array(num_correct_vals).sum()
         val_accuracy = jnp.array(pcnt_correct_vals).mean()
         num_puzzles = jnp.array(num_solved_puzzles).sum()
-        puzzle_accuracy = jnp.array(pcnt_solved_puzzles).mean()
         masked_entropies = jnp.concatenate(masked_entropies)
         unmasked_entropies = jnp.concatenate(unmasked_entropies)
         return {
