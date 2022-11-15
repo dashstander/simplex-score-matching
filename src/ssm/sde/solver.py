@@ -29,7 +29,7 @@ class HypersphereBackwardsSolver(to.Tree):
         cond_score = self.score_model.apply(params, k2, x, mask, time)
         return self.cfg_weight * (cond_score) + (1 - self.cfg_weight) * uncond_score
 
-    def solve(self, x_final, mask, t_final, params, rng):
+    def solve(self, params, rng, x_final, mask, t_final):
         step_size = step_size = t_final / self.num_steps
         batch_size = x_final.shape[0]
         def _step(base_point, data):
