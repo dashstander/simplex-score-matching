@@ -31,11 +31,12 @@ class HypersphereBackwardsSolver(to.Tree):
 
     def solve(self, params, rng, x_final, mask, t_final):
         step_size = step_size = t_final / self.num_steps
-        batch_size = x_final.shape[0]
         def _step(base_point, data):
             key, t = data
             k1, k2 = jax.random.split(key)
-            logits = self.score_fn(params, k1, base_point, mask, jnp.repeat(t, batch_size))
+            batch_size = jnp.shape(base_point)[0]
+            times = jnp.full((batch_size,), t)
+            logits = self.score_fn(params, k1, base_point, mask, times)
             pred = jax.random.categorical(k2, logits)
             drift_term = step_size * jax.vmap(self.manifold.log)(pred, base_point)
             point = jax.vmap(self.manifold.exp)(drift_term, base_point)

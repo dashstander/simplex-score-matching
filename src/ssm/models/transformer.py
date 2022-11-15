@@ -175,7 +175,7 @@ class DiffusionModel(hk.Module):
         x = x + jnp.sqrt(2) * trans_x
         x = self.linear1(x) + xt + mask
         x = self.linear2(x)
-        return jax.nn.normalize(x, axis=-1)
+        return x
 
 
 def make_diffusion_fn(model_config, training):
