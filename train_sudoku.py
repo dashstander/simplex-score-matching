@@ -182,7 +182,7 @@ def make_validation_fn(config):
             #preds = punsplit(jax.device_put(preds), cpu_dev)
             validation_metrics(
                 preds,
-                solutions,
+                psplit(solutions),
                 masks,
                 num_solved_puzzles,
                 pcnt_solved_puzzles,
