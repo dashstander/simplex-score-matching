@@ -140,7 +140,6 @@ def validation_metrics(
     solutions,
     masks,
     num_solved_puzzles,
-    pcnt_solved_puzzles,
     num_correct_vals,
     pcnt_correct_vals,
     masked_entropies,
@@ -198,7 +197,6 @@ def make_validation_fn(config):
             'validation/num_correct_values': num_vals,
             'validation/num_solved_puzzles': num_puzzles,
             'validation/value_accuracy': val_accuracy,
-            'validation/puzzle_accuracy': puzzle_accuracy,
             'validation/masked_val_entropy': masked_entropies,
             'validation/unmasked_val_entropy': unmasked_entropies
         }
