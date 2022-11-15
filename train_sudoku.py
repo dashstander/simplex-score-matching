@@ -164,7 +164,7 @@ def make_validation_fn(config):
             masks = psplit(masks, num_local_devices)
             final_time = psplit( jnp.ones((batch_size,)), num_local_devices)
             solve_keys = split_and_stack(solve_key, num_local_devices)
-            preds = solver.solve(puzzles, masks, final_time, params, solve_keys)
+            preds = solver(puzzles, masks, final_time, params, solve_keys)
             calc_val_metrics(
                 punsplit(preds),
                 punsplit(solutions),
@@ -228,7 +228,7 @@ def make_solver(config):
     solver = HypersphereBackwardsSolver(9, 81, num_steps, cfg_weight, model)
     def solve_fn(params, x_final, mask, rng):
         t = jax.zeros((x_final.shape[0],))
-        return solver(params, x_final, mask, t, rng)
+        return solver.solve(params, x_final, mask, t, rng)
     return jax.pmap(solve_fn, axis_name='batch')
 
 
@@ -312,7 +312,7 @@ def main(args):
                 save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
                 val_start = time.time()
-                val_log = validation_fn(unreplicate(ema_params), subkey)
+                val_log = validation_fn(ema_params, subkey)
                 val_time = time.time() - val_start
                 batch_log.update(val_log)
                 batch_log['validation/time'] = val_time
