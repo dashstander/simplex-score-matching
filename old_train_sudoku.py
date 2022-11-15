@@ -5,12 +5,10 @@ os.environ['TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD'] = '17179869184'
 
 import argparse
 from confection import Config
-from functools import partial
 import haiku as hk
 from haiku.data_structures import to_mutable_dict, tree_bytes, tree_size
 import jax
 import jax.numpy as jnp
-from jax.nn import softmax
 import numpy as np
 import optax
 from pathlib import Path
@@ -20,8 +18,7 @@ from tqdm import tqdm
 import wandb
 
 from ssm.data.sudoku import make_train_loader, make_val_loader
-from ssm.manifolds import HypersphereProductManifold
-from ssm.sde.solver import HypersphereBackwardsSolver
+from ssm.grw import make_sudoku_forward_walker, make_sudoku_solver
 from ssm.utils import (
     psplit,
     punsplit,
@@ -60,31 +57,18 @@ def save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, steps,
             pickle.dump(blob, f)
 
 
-def sudoku_noise_and_geodesic(key, manifold, x0, t):
-    batch_size, seq_len, simplex_dim = x0.shape
-    noise = jax.random.dirichlet(
-        key,
-        alpha=jnp.ones((simplex_dim,)),
-        shape=(batch_size, seq_len)
-    )
-    x_final = jnp.sqrt(noise)
-    tangent_vecs =jax.vmap(manifold.log)(x_final, x0)
-    scaled_vecs = tangent_vecs * jnp.expand_dims(t, axis=(1, 2))
-    return jax.vmap(manifold.exp)(scaled_vecs, x0)
-
-
-def make_forward_fn(model, ema_update, opt, manifold, axis_name='batch'):
+def make_forward_fn(model, ema_update, opt, grw_fn, axis_name='batch'):
 
     def loss_fn(params, x0, masks, key):
-        time_key, noise_key, model_key = jax.random.split(key, 3)
+        time_key, grw_key, model_key = jax.random.split(key, 3)
         batch_size, _, _ = x0.shape
         t = jnp.cos(
             (jnp.pi / 2) * jax.random.uniform(time_key, (batch_size,))
         )
-        noised_x = sudoku_noise_and_geodesic(noise_key, manifold, x0, t)
-        logits = model.apply(params, model_key, noised_x, masks, t)
-        cross_ent = optax.softmax_cross_entropy(logits, x0)
-        loss = jnp.mean(cross_ent)
+        noised_x, target_score = grw_fn(x0, t, grw_key)
+        pred_score = model.apply(params, model_key, noised_x, masks, t)
+        mse = jnp.square(pred_score - target_score)
+        loss = jnp.mean(mse)
         return loss
 
     def train_step(params, ema_state, opt_state, key, inputs, masks):
@@ -99,114 +83,79 @@ def make_forward_fn(model, ema_update, opt, manifold, axis_name='batch'):
     return jax.pmap(train_step, axis_name=axis_name)
 
 
-def puzzle_random_init(solutions, masks, shape, key):
-    batch_size, seq_len, dim = shape
-    rv = jax.random.dirichlet(key, jnp.ones((dim,)), (batch_size, seq_len))
-    #rv = normalize(jnp.abs(rv))
+def puzzle_random_init(solutions, masks, key):
+    rv = jax.random.normal(key, solutions.shape)
+    rv = normalize(jnp.abs(rv))
     return solutions * masks + (1 - masks) * rv
 
 
 def entropy(x, axis=-1):
-    p = softmax(x, axis=axis)
-    return -1. * jnp.sum(p * jnp.log(p), axis=axis)
+    return -1. * jnp.sum(x * jnp.log(x), axis=axis)
 
-
-
-@partial(jax.pmap, axis_name='batch')
 def calc_val_metrics(preds, solutions, masks):
-    entropies = entropy(preds, axis=-1)
-    predicted = jnp.argmax(preds, axis=-1) + 1
+    ent = jnp.mean(entropy(punsplit(preds) ** 2, axis=-1), axis=-1)
+    predicted = punsplit(jnp.argmax(preds, axis=-1) + 1)
     solutions = jnp.argmax(solutions, axis=-1) + 1
-    masked = jnp.max(masks, axis=-1)
+    masked = punsplit(jnp.max(masks, axis=-1))
     not_masked = 1 - masked
     correct = predicted == solutions
-    correct_vals = 1. * jnp.sum(correct * not_masked)
-    correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
-    batch_puzzle_pcnt =  correct_puzzles / predicted.shape[0]
-    batch_val_pcnt = correct_vals / not_masked.sum()
-    batch_unmasked_ent = jnp.mean(jnp.take(entropies, jnp.nonzero(not_masked)) , axis=-1)
-    batch_masked_ent = jnp.mean(jnp.take(entropies, jnp.nonzero(masked)) , axis=-1)
+    num_correct_vals = 1. * jnp.sum(correct * not_masked)
+    num_correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
+    pcnt_correct_puzzles =  num_correct_puzzles / predicted.shape[0]
+    pcnt_correct_vals = num_correct_vals / not_masked.sum()
     return (
-        correct_vals,
-        correct_puzzles,
-        batch_val_pcnt,
-        batch_puzzle_pcnt,
-        batch_unmasked_ent,
-        batch_masked_ent
+        num_correct_puzzles,
+        pcnt_correct_puzzles,
+        num_correct_vals,
+        pcnt_correct_vals,
+        ent
     )
 
-def validation_metrics(
-    preds,
-    solutions,
-    masks,
-    num_solved_puzzles,
-    pcnt_solved_puzzles,
-    num_correct_vals,
-    pcnt_correct_vals,
-    masked_entropies,
-    unmasked_entropies
-):
-    nvals, npuzz, pcntval, pcntpuzz, unmaskent, maskent = calc_val_metrics(preds, solutions, masks)
-    num_solved_puzzles.append(jax.lax.psum(npuzz, axis_name='batch'))
-    pcnt_solved_puzzles.append(jax.lax.pmean(pcntpuzz, axis_name='batch'))
-    num_correct_vals.append(jax.lax.psum(nvals, axis_name='batch'))
-    pcnt_correct_vals.append(jax.lax.pmean(pcntval, axis_name='batch'))
-    masked_entropies.append(jax.lax.pmean(maskent, axis_name='batch'))
-    unmasked_entropies.append(jax.lax.pmean(unmaskent, axis_name='batch'))
 
-
-def make_validation_fn(config):
-
-    solver = make_solver(config)
-
-    def val_fn(params, key):
-        num_local_devices = jax.local_device_count()
-        #num_batches = config['data']['num_val_batches']
-        key, subkey = jax.random.split(key)
-        #solve_fn = make_solver(config, params, subkey1)
-        num_solved_puzzles = []
-        pcnt_solved_puzzles = []
-        num_correct_vals = []
-        pcnt_correct_vals = []
-        masked_entropies = []
-        unmasked_entropies = []
-        loader = make_val_loader(config, subkey)
-        #cpu_dev = jax.devices("cpu")[0]
-        for solutions, masks in loader:
-            key, puzzle_key, solve_key = jax.random.split(key, 3)
-            puzzles = puzzle_random_init(solutions, masks, solutions.shape, puzzle_key)
-            puzzles = psplit(puzzles, num_local_devices)
-            masks = psplit(masks, num_local_devices)
-            solve_keys = split_and_stack(solve_key, num_local_devices)
-            preds = solver(params, solve_keys, puzzles, masks)
-            #preds = punsplit(jax.device_put(preds), cpu_dev)
-            validation_metrics(
-                preds,
-                solutions,
-                masks,
-                num_solved_puzzles,
-                pcnt_solved_puzzles,
-                num_correct_vals,
-                pcnt_correct_vals,
-                masked_entropies,
-                unmasked_entropies
-            )
-        #val_time = time.time() - val_start
-        num_vals = jnp.array(num_correct_vals).sum()
-        val_accuracy = jnp.array(pcnt_correct_vals).mean()
-        num_puzzles = jnp.array(num_solved_puzzles).sum()
-        puzzle_accuracy = jnp.array(pcnt_solved_puzzles).mean()
-        masked_entropies = jnp.concatenate(masked_entropies)
-        unmasked_entropies = jnp.concatenate(unmasked_entropies)
-        return {
-            'validation/num_correct_values': num_vals,
-            'validation/num_solved_puzzles': num_puzzles,
-            'validation/value_accuracy': val_accuracy,
-            'validation/puzzle_accuracy': puzzle_accuracy,
-            'validation/masked_val_entropy': masked_entropies,
-            'validation/unmasked_val_entropy': unmasked_entropies
-        }
-    return val_fn
+def do_validation(config, params, key):
+    num_local_devices = jax.local_device_count()
+    batch_size = config['data']['batch_size']
+    #num_batches = config['data']['num_val_batches']
+    val_start = time.time()
+    key, subkey1, subkey2 = jax.random.split(key, 3)
+    solve_fn = make_solver(config, params, subkey1)
+    num_solved_puzzles = []
+    pcnt_solved_puzzles = []
+    num_correct_vals = []
+    pcnt_correct_vals = []
+    entropies = []
+    loader = make_val_loader(config, subkey2)
+    #val_data = zip(jnp.vsplit(val_puzzles, num_batches), jnp.vsplit(val_masks, num_batches))
+    for solutions, masks in loader:
+        batch_size = solutions.shape[0]
+        key, puzzle_key, solve_key = jax.random.split(key, 3)
+        puzzles = puzzle_random_init(solutions, masks, puzzle_key)
+        puzzles = psplit(puzzles, num_local_devices)
+        masks = psplit(masks, num_local_devices)
+        final_time = psplit( jnp.ones((batch_size,)), num_local_devices)
+        solve_keys = split_and_stack(solve_key, num_local_devices)
+        preds = solve_fn(puzzles, masks, final_time, solve_keys)
+        metrics = calc_val_metrics(preds, solutions, masks)
+        batch_correct_puzzles, batch_puzzle_acc, batch_correct_vals, batch_val_acc, batch_ent = metrics
+        num_solved_puzzles.append(batch_correct_puzzles)
+        pcnt_solved_puzzles.append(batch_puzzle_acc)
+        num_correct_vals.append(batch_correct_vals)
+        pcnt_correct_vals.append(batch_val_acc)
+        entropies.append(batch_ent)
+    val_time = time.time() - val_start
+    num_vals = jnp.array(num_correct_vals).sum()
+    val_accuracy = jnp.array(pcnt_correct_vals).mean()
+    num_puzzles = jnp.array(num_solved_puzzles).sum()
+    puzzle_accuracy = jnp.array(pcnt_solved_puzzles).mean()
+    all_entropies = jnp.concatenate(entropies)
+    return {
+        'validation/num_correct_values': num_vals,
+        'validation/num_solved_puzzles': num_puzzles,
+        'validation/value_accuracy': val_accuracy,
+        'validation/puzzle_accuracy': puzzle_accuracy,
+        'validation/entropy': all_entropies,
+        'validation/time': val_time
+    }
 
 
 def make_optimizer(config):
@@ -235,15 +184,43 @@ def setup_model(config, key):
     return model, params, opt, opt_state
 
 
-def make_solver(config):
+def setup_forward_diffusion(config, key):
+    num_steps = config['sde']['num_fwd_steps']
+    beta_0 = config['sde']['beta_0']
+    beta_f = config['sde']['beta_f']
+    diffusion = hk.transform(make_sudoku_forward_walker(num_steps, beta_0, beta_f))
+    x_init = jnp.full((2, 81, 9), 1./3)
+    t_init = jnp.ones((2,))
+    diff_params = diffusion.init(key, x_init, t_init)
+    def forward_fn(x0, t, rng):
+        return diffusion.apply(diff_params, rng, x0, t)
+    return forward_fn
+
+def make_solver(config, params, key):
     num_steps = config['sde']['num_bwd_steps']
+    beta_0 = config['sde']['beta_0']
+    beta_f = config['sde']['beta_f']
     cfg_weight = config['sde']['cfg_weight']
     transformer_config = TransformerConfig.from_config(config)
-    model = hk.transform(make_diffusion_fn(transformer_config, training=False))
-    solver = HypersphereBackwardsSolver(9, 81, num_steps, cfg_weight, 1., model)
-    def solve_fn(params, rng, x_final, mask):
-        return solver.solve(params, rng, x_final, mask)
-    return jax.pmap(solve_fn, axis_name='batch')
+    model = hk.transform(make_score_fn(transformer_config, training=False))
+    x_init = jnp.full((2, 81, 9), 1./3)
+    t_init = jnp.ones((2,))
+    def score_fn(rng, x, mask, time):
+        k1, k2 = jax.random.split(rng)
+        x = x[None]
+        mask = mask[None]
+        time = time[None]
+        uncond_mask = jnp.zeros_like(mask)
+        # crowsonkb: i normally use the uncond-centered version which is w * eps(z, c) + (1 - w) * eps(z).  or uncond_score + w * (cond_score - uncond_score).
+        # so w=0 means uncond, w=1 means cond, -1 means negative cond, etc
+        uncond_score = model.apply(params, k1, x, uncond_mask, time)
+        cond_score = model.apply(params, k2, x, mask, time)
+        return cfg_weight * (cond_score) + (1 - cfg_weight) * uncond_score
+    solver = hk.transform(make_sudoku_solver(score_fn, num_steps, beta_0, beta_f))
+    solver_params = solver.init(key, x_init, x_init, t_init)
+    def _solve(x, mask, t, key):
+        return solver.apply(solver_params, key, x, mask, t)
+    return jax.pmap(_solve, axis_name='batch')
 
 
 def main(args):
@@ -264,11 +241,13 @@ def main(args):
 
     print(f'Beginning training with {num_local_devices} devices.')
     
-    key, model_key = jax.random.split(jax.random.PRNGKey(args.seed))
-
-    sudoku_manifold = HypersphereProductManifold(8, 81)
+    key, model_key, diffusion_key = jax.random.split(
+        jax.random.PRNGKey(args.seed),
+        3
+    )
 
     model, params, opt, opt_state = setup_model(config, model_key)
+    forward_diffusion_fn = setup_forward_diffusion(config, diffusion_key)
     
     #if args.resume:
     #    train_state = checkpoints.restore_checkpoint(args.checkpoint_dir, train_state)
@@ -282,24 +261,22 @@ def main(args):
             warmup_length=ema_warmup
         )(x))
     _, ema_state = ema_fn.init(None, params)
-
-    train_step_fn = make_forward_fn(model, ema_fn, opt, sudoku_manifold)
-
-    validation_fn = make_validation_fn(config)
+    train_step_fn = make_forward_fn(model, ema_fn, opt, forward_diffusion_fn)
 
     key = jax.random.split(key, num_processes)[local_rank]
     num_params = tree_size(params)
     num_bytes = tree_bytes(params)
-
     if local_rank == 0:
         print(f'Initialized model with {num_params} parameters, taking up {num_bytes/1e9}GB')
 
     params = jax.device_put_replicated(params, devices)
     opt_state = jax.device_put_replicated(opt_state, devices)
+    batch_size = config['data']['batch_size']
     ema_state = jax.device_put_replicated(ema_state, devices)
     total_size = int(config['data']['num_train_batches'])
     
     def train_epoch(params, ema_state, opt_state, epoch, key):
+        #executor = ThreadPoolExecutor(max_workers=10)
         key, data_key = jax.random.split(key)
         loader = make_train_loader(config, data_key) 
         epoch_losses = []
@@ -318,22 +295,18 @@ def main(args):
             epoch_losses.append(single_loss)
             #print(jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), grads))
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
-            if i % 10 == 0:
-                grads = to_mutable_dict(grads)
-                batch_log['model/gradients'] = jax.tree_map(wandb.Histogram, grads)
+            #if i % 5 == 0:
+            #    batch_log['model/gradients'] = to_mutable_dict(grads)
+            wandb_log(batch_log)
+            del batch_log
             if i % 1000 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
                 key, subkey = jax.random.split(key)
-                val_start = time.time()
-                val_log = validation_fn(ema_params, subkey)
-                val_time = time.time() - val_start
-                batch_log.update(val_log)
-                batch_log['validation/time'] = val_time
+                val_log = do_validation(config, unreplicate(ema_params), subkey)
                 for k, v in val_log.items():
                     print(f'{k}: {v}')
-            wandb_log(batch_log)
-            del batch_log
+                wandb_log(val_log)
         epoch_loss = np.mean(epoch_losses)
         
         wandb_log({'epoch/loss': epoch_loss})
