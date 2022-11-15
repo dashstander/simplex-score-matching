@@ -30,7 +30,7 @@ class HypersphereBackwardsSolver(to.Tree):
         return self.cfg_weight * (cond_score) + (1 - self.cfg_weight) * uncond_score
 
     def solve(self, params, rng, x_final, mask, t_final):
-        step_size = step_size = t_final / self.num_steps
+        step_size = t_final / self.num_steps
         def _step(base_point, data):
             key, t = data
             k1, k2 = jax.random.split(key)
