@@ -98,10 +98,10 @@ def make_forward_fn(model, ema_update, opt, manifold, axis_name='batch'):
     return jax.pmap(train_step, axis_name=axis_name)
 
 
-def puzzle_random_init(solutions, masks, key):
-
-    rv = jax.random.dirichlet(key, solutions.shape)
-    rv = normalize(jnp.abs(rv))
+def puzzle_random_init(solutions, masks, shape, key):
+    batch_size, seq_len, dim = shape
+    rv = jax.random.dirichlet(key, jnp.ones((dim,)), (batch_size, seq_len))
+    #rv = normalize(jnp.abs(rv))
     return solutions * masks + (1 - masks) * rv
 
 
