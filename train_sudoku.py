@@ -146,6 +146,7 @@ def validation_metrics(
     unmasked_entropies
 ):
     nvals, npuzz, pcntval, unmaskent, maskent = calc_val_metrics(preds, solutions, masks)
+    print(npuzz)
     num_solved_puzzles.append(jax.lax.psum(npuzz, axis_name='batch'))
     num_correct_vals.append(jax.lax.psum(nvals, axis_name='batch'))
     pcnt_correct_vals.append(jax.lax.pmean(pcntval, axis_name='batch'))
