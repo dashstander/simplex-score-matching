@@ -68,7 +68,7 @@ def sudoku_noise_and_geodesic(key, manifold, x0, t):
     )
     x_final = jnp.sqrt(noise)
     tangent_vecs =jax.vmap(manifold.log)(x_final, x0)
-    scaled_vecs = tangent_vecs * t[..., None]
+    scaled_vecs = tangent_vecs * jnp.expand_dims(t, axis=(1, 2))
     return jax.vmap(manifold.exp)(scaled_vecs, x0)
 
 
@@ -277,7 +277,7 @@ def main(args):
     key = jax.random.split(key, num_processes)[local_rank]
     num_params = tree_size(params)
     num_bytes = tree_bytes(params)
-    
+
     if local_rank == 0:
         print(f'Initialized model with {num_params} parameters, taking up {num_bytes/1e9}GB')
 
