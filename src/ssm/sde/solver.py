@@ -9,12 +9,18 @@ class HypersphereBackwardsSolver(to.Tree):
     manifold: HypersphereProductManifold = to.field(node=False)
     num_steps: int = to.field(default=100, node=False)
     cfg_weight: float = to.field(default=5., node=False)
+    t_final: float = to.field(default=1., node=False)
+    step_size: float = to.field(node=False)
     score_model = to.field(node=False)
 
-    def __init__(self, dim: int, mul: int, num_steps: int, cfg_weight: float, score_model):
+    def __init__(self, dim: int, mul: int, num_steps: int, cfg_weight: float, t_final: float, score_model):
         self.manifold = HypersphereProductManifold(dim - 1, mul)
         self.num_steps = num_steps
         self.score_model = score_model
+        self.cfg_weight = cfg_weight
+        self.t_final = t_final
+        self.step_size = t_final / num_steps
+
     
     @property
     def shape_extrinsic(self):
@@ -29,8 +35,8 @@ class HypersphereBackwardsSolver(to.Tree):
         cond_score = self.score_model.apply(params, k2, x, mask, time)
         return self.cfg_weight * (cond_score) + (1 - self.cfg_weight) * uncond_score
 
-    def solve(self, params, rng, x_final, mask, t_final):
-        step_size = t_final / self.num_steps
+    def solve(self, params, rng, x_final, mask):
+        #step_size = self.t_final / self.num_steps
         def _step(base_point, data):
             key, t = data
             k1, k2 = jax.random.split(key)
@@ -41,11 +47,11 @@ class HypersphereBackwardsSolver(to.Tree):
                 jax.random.categorical(k2, logits),
                 num_classes=self.manifold.base_dim + 1
             )
-            drift_term = step_size * jax.vmap(self.manifold.log)(pred, base_point)
+            drift_term = self.step_size * jax.vmap(self.manifold.log)(pred, base_point)
             point = jax.vmap(self.manifold.exp)(drift_term, base_point)
             point = jnp.abs(point)
             return point, point
-        times = jnp.linspace(t_final, 0., self.num_steps)
+        times = jnp.linspace(self.t_final, 0., self.num_steps)
         keys = jax.random.split(rng, self.num_steps)
         x0, path = jax.lax.scan(_step, x_final, (keys, times))
         return x0, path

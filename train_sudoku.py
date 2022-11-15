@@ -162,9 +162,8 @@ def make_validation_fn(config):
             puzzles = puzzle_random_init(solutions, masks, solutions.shape, puzzle_key)
             puzzles = psplit(puzzles, num_local_devices)
             masks = psplit(masks, num_local_devices)
-            final_time = psplit(jnp.ones((batch_size,)), num_local_devices)
             solve_keys = split_and_stack(solve_key, num_local_devices)
-            preds = solver(params, solve_keys, puzzles, masks, final_time)
+            preds = solver(params, solve_keys, puzzles, masks)
             calc_val_metrics(
                 punsplit(preds),
                 punsplit(solutions),
@@ -225,9 +224,9 @@ def make_solver(config):
     cfg_weight = config['sde']['cfg_weight']
     transformer_config = TransformerConfig.from_config(config)
     model = hk.transform(make_diffusion_fn(transformer_config, training=False))
-    solver = HypersphereBackwardsSolver(9, 81, num_steps, cfg_weight, model)
-    def solve_fn(params, rng, x_final, mask, t_final):
-        return solver.solve(params, rng, x_final, mask, t_final)
+    solver = HypersphereBackwardsSolver(9, 81, num_steps, cfg_weight, 1., model)
+    def solve_fn(params, rng, x_final, mask):
+        return solver.solve(params, rng, x_final, mask)
     return jax.pmap(solve_fn, axis_name='batch')
 
 
