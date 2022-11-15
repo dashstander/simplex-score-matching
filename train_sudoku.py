@@ -159,7 +159,7 @@ def make_validation_fn(config):
         loader = make_val_loader(config, subkey)
         for solutions, masks in loader:
             key, puzzle_key, solve_key = jax.random.split(key, 3)
-            puzzles = puzzle_random_init(solutions, masks, puzzle_key)
+            puzzles = puzzle_random_init(solutions, masks, solutions.shape, puzzle_key)
             puzzles = psplit(puzzles, num_local_devices)
             masks = psplit(masks, num_local_devices)
             final_time = psplit( jnp.ones((batch_size,)), num_local_devices)
@@ -176,7 +176,6 @@ def make_validation_fn(config):
                 masked_entropies,
                 unmasked_entropies
             )
-
         #val_time = time.time() - val_start
         num_vals = jnp.array(num_correct_vals).sum()
         val_accuracy = jnp.array(pcnt_correct_vals).mean()
