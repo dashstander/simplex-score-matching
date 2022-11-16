@@ -191,8 +191,8 @@ def make_validation_fn(config):
         num_vals = jnp.array(num_correct_vals).sum()
         val_accuracy = jnp.array(pcnt_correct_vals).mean()
         num_puzzles = jnp.array(num_solved_puzzles).sum()
-        masked_entropies = jnp.concatenate(masked_entropies)
-        unmasked_entropies = jnp.concatenate(unmasked_entropies)
+        masked_entropies = jnp.array(masked_entropies)
+        unmasked_entropies = jnp.array(unmasked_entropies)
         return {
             'validation/num_correct_values': num_vals,
             'validation/num_solved_puzzles': num_puzzles,
