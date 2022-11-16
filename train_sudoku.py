@@ -149,8 +149,8 @@ def validation_metrics(
     num_solved_puzzles.append(jnp.sum(npuzz))
     num_correct_vals.append(jnp.sum(nvals))
     pcnt_correct_vals.append(jnp.mean(pcntval))
-    masked_entropies.append(jnp.mean(maskent))
-    unmasked_entropies.append(jnp.mean(unmaskent))
+    masked_entropies.append(jnp.mean(maskent, axis=-1))
+    unmasked_entropies.append(jnp.mean(unmaskent, axis=-1))
 
 
 def make_validation_fn(config):
@@ -191,8 +191,8 @@ def make_validation_fn(config):
         num_vals = jnp.array(num_correct_vals).sum()
         val_accuracy = jnp.array(pcnt_correct_vals).mean()
         num_puzzles = jnp.array(num_solved_puzzles).sum()
-        masked_entropies = jnp.array(masked_entropies)
-        unmasked_entropies = jnp.array(unmasked_entropies)
+        masked_entropies = jnp.concatenate(masked_entropies)
+        unmasked_entropies = jnp.concatenate(unmasked_entropies)
         return {
             'validation/num_correct_values': num_vals,
             'validation/num_solved_puzzles': num_puzzles,
@@ -312,9 +312,9 @@ def main(args):
             epoch_losses.append(single_loss)
             #print(jax.tree_util.tree_map(lambda x: jnp.any(jnp.isnan(x)), grads))
             batch_log = {'train/loss': single_loss, 'train/time': batch_end - batch_start}
-            if i % 10 == 0:
-                grads = to_mutable_dict(grads)
-                batch_log['model/gradients'] = jax.tree_map(wandb.Histogram, grads)
+            #if i % 10 == 0:
+            #    grads = to_mutable_dict(grads)
+            #    batch_log['model/gradients'] = jax.tree_map(wandb.Histogram, grads)
             if i % 1000 == 0:
                 tqdm.write(f'Batch {i}, loss {single_loss:g}')
                 save_checkpoint(checkpoint_dir, params, ema_params, opt_state, epoch, i, key)
