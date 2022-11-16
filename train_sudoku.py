@@ -114,7 +114,7 @@ def entropy(x, axis=-1):
 
 @partial(jax.pmap, axis_name='batch')
 def calc_val_metrics(preds, solutions, masks):
-    entropies = entropy(preds, axis=-1)
+    entropies = entropy(preds**2, axis=-1)
     predicted = jnp.argmax(preds, axis=-1) + 1
     solutions = jnp.argmax(solutions, axis=-1) + 1
     masked = jnp.max(masks, axis=-1)
@@ -197,8 +197,8 @@ def make_validation_fn(config):
             'validation/num_correct_values': num_vals,
             'validation/num_solved_puzzles': num_puzzles,
             'validation/value_accuracy': val_accuracy,
-            'validation/masked_val_entropy': masked_entropies,
-            'validation/unmasked_val_entropy': unmasked_entropies
+            'validation/masked_val_entropy': wandb.Histogram(masked_entropies),
+            'validation/unmasked_val_entropy': wandb.Histogram(unmasked_entropies)
         }
     return val_fn
 
