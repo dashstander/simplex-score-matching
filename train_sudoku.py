@@ -117,7 +117,7 @@ def entropy(x, axis=-1):
 
 def pathwise_loss(logits, solutions):
     # logits_shape = (batch_size, num_steps, 81, 9)
-    # solutions_shape = (batch_size, num_steps, 81, 9)
+    # solutions_shape = (batch_size, 81, 9)
     cross_ent = jax.vmap(optax.softmax_cross_entropy, in_axes=(1, None))
     loss = cross_ent(logits, solutions)
     loss_by_times = jax.tree_util.tree_map(
@@ -134,8 +134,8 @@ def pathwise_loss(logits, solutions):
 def calc_val_metrics(preds, logits, solutions, masks):
     #entropies = entropy(preds**2, axis=-1)
     predicted = jnp.argmax(preds, axis=-1)
-    path_losses = pathwise_loss(jnp.squeeze(logits), solutions)
-    #solutions = jnp.argmax(solutions, axis=-1)
+    path_losses = pathwise_loss(logits, jnp.squeeze(solutions))
+    solutions = jnp.argmax(jnp.squeeze(solutions), axis=-1)
     masked = jnp.max(masks, axis=-1)
     not_masked = 1 - masked
     correct = predicted == solutions
