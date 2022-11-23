@@ -134,7 +134,7 @@ def pathwise_loss(logits, solutions):
 def calc_val_metrics(preds, logits, solutions, masks):
     #entropies = entropy(preds**2, axis=-1)
     predicted = jnp.argmax(preds, axis=-1)
-    path_losses = pathwise_loss(logits, solutions)
+    path_losses = pathwise_loss(jnp.squeeze(logits), solutions)
     #solutions = jnp.argmax(solutions, axis=-1)
     masked = jnp.max(masks, axis=-1)
     not_masked = 1 - masked
