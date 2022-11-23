@@ -121,7 +121,11 @@ def make_val_loader(config, rng_key):
     train_size = data_size - num_validation
     indices = np.arange(train_size, data_size)
     splits = data_config['num_val_batches'] * 16
-    for batch_indices in jnp.array_split(indices, splits):
+    print(splits)
+    all_splits = jnp.array_split(indices, splits)
+    print(len(all_splits))
+    print(all_splits[0].shape)
+    for batch_indices in all_splits:
         if len(batch_indices) != batch_size:
             #print(f'Batch has size {len(batch_indices)} not {batch_size}')
             continue
