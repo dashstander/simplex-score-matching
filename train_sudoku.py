@@ -120,11 +120,12 @@ def pathwise_loss(logits, solutions):
     # solutions_shape = (batch_size, 81, 9)
     #jax.debug.print(f'Logit shape: {logits.shape}')
     #jax.debug.print(f'solutions shape: {solutions.shape}')
-    #cross_ent = jax.vmap(optax.softmax_cross_entropy, in_axes=(1, None))
-    loss = jax.lax.map(
-        lambda x: optax.softmax_cross_entropy(x, solutions),
-        jnp.swapaxes(logits, 0, 1)
-    )
+    cross_ent = jax.vmap(optax.softmax_cross_entropy, in_axes=(0, None))
+    loss = cross_ent(logits, solutions)
+    #loss = jax.lax.map(
+    #    lambda x: optax.softmax_cross_entropy(x, solutions),
+    #    logits
+    #)
     loss_by_times = jax.tree_util.tree_map(
         # average over the time and sequence (puzzle) dimensions
         lambda x: jnp.mean(x, axis=(0, 2)),
@@ -223,7 +224,8 @@ def make_validation_fn(config):
             'validation/num_solved_puzzles': num_puzzles,
             'validation/value_accuracy': val_accuracy
         }
-        return val_dict.update(path_losses)
+        val_dict.update(path_losses)
+        return val_dict
     return val_fn
 
 
