@@ -106,17 +106,36 @@ def puzzle_random_init(solutions, masks, shape, key):
     return solutions * masks + (1 - masks) * rv
 
 
+def getter(key, pytree):
+    return [p[key] for p in pytree]
+
+
 def entropy(x, axis=-1):
     p = softmax(x, axis=axis)
     return -1. * jnp.sum(p * jnp.log(p), axis=axis)
 
 
+def pathwise_loss(logits, solutions):
+    # logits_shape = (batch_size, num_steps, 81, 9)
+    # solutions_shape = (batch_size, num_steps, 81, 9)
+    cross_ent = jax.vmap(optax.softmax_cross_entropy, in_axes=(1, None))
+    loss = cross_ent(logits, solutions)
+    loss_by_times = jax.tree_util.tree_map(
+        # average over the time and sequence (puzzle) dimensions
+        lambda x: jnp.mean(x, axis=(0, 2)),
+        jnp.split(loss, 20)
+    )
+    return {
+        f'validation/path_loss/t_{t}': v for t, v in zip(range(0, 100, 5), loss_by_times)
+    }
+
 
 @partial(jax.pmap, axis_name='batch')
-def calc_val_metrics(preds, solutions, masks):
-    entropies = entropy(preds**2, axis=-1)
+def calc_val_metrics(preds, logits, solutions, masks):
+    #entropies = entropy(preds**2, axis=-1)
     predicted = jnp.argmax(preds, axis=-1)
-    solutions = jnp.argmax(solutions, axis=-1)
+    path_losses = pathwise_loss(logits, solutions)
+    #solutions = jnp.argmax(solutions, axis=-1)
     masked = jnp.max(masks, axis=-1)
     not_masked = 1 - masked
     correct = predicted == solutions
@@ -124,33 +143,37 @@ def calc_val_metrics(preds, solutions, masks):
     correct_puzzles = 1. * jax.vmap(jnp.all)(correct).sum()
     #batch_puzzle_pcnt =  correct_puzzles / predicted.shape[0]
     batch_val_pcnt = correct_vals / not_masked.sum()
-    batch_unmasked_ent = jnp.sum(entropies * not_masked, axis=-1) / jnp.count_nonzero(not_masked)
-    batch_masked_ent = jnp.sum(entropies *masked , axis=-1) / jnp.count_nonzero(masked)
+    #batch_unmasked_ent = jnp.sum(entropies * not_masked, axis=-1) / jnp.count_nonzero(not_masked)
+    #batch_masked_ent = jnp.sum(entropies *masked , axis=-1) / jnp.count_nonzero(masked)
     return (
         correct_vals,
         correct_puzzles,
         batch_val_pcnt,
-        batch_unmasked_ent,
-        batch_masked_ent
+        path_losses
+        #batch_unmasked_ent,
+        #batch_masked_ent
     )
 
 
 def validation_metrics(
     preds,
+    logits,
     solutions,
     masks,
     num_solved_puzzles,
     num_correct_vals,
     pcnt_correct_vals,
-    masked_entropies,
-    unmasked_entropies
+    path_losses
+    #masked_entropies,
+    #unmasked_entropies
 ):
-    nvals, npuzz, pcntval, maskent, unmaskent = calc_val_metrics(preds, solutions, masks)
+    nvals, npuzz, pcntval, path_loss = calc_val_metrics(preds, logits, solutions, masks)
     num_solved_puzzles.append(jnp.sum(npuzz))
     num_correct_vals.append(jnp.sum(nvals))
     pcnt_correct_vals.append(jnp.mean(pcntval))
-    masked_entropies.append(jnp.mean(maskent))
-    unmasked_entropies.append(jnp.mean(unmaskent))
+    path_losses.append(path_loss)
+    #masked_entropies.append(jnp.mean(maskent))
+    #unmasked_entropies.append(jnp.mean(unmaskent))
 
 
 def make_validation_fn(config):
@@ -165,41 +188,37 @@ def make_validation_fn(config):
         num_solved_puzzles = []
         num_correct_vals = []
         pcnt_correct_vals = []
-        masked_entropies = []
-        unmasked_entropies = []
+        batch_pathwise_loss = []
         loader = make_val_loader(config, subkey)
-        #cpu_dev = jax.devices("cpu")[0]
         for solutions, masks in loader:
             key, puzzle_key, solve_key = jax.random.split(key, 3)
             puzzles = puzzle_random_init(solutions, masks, solutions.shape, puzzle_key)
             puzzles = psplit(puzzles, num_local_devices)
             masks = psplit(masks, num_local_devices)
             solve_keys = split_and_stack(solve_key, num_local_devices)
-            preds, path = solver(params, solve_keys, puzzles, masks)
-            #preds = punsplit(jax.device_put(preds), cpu_dev)
+            preds, data = solver(params, solve_keys, puzzles, masks)
+            logits, path = data
             validation_metrics(
                 preds,
+                logits,
                 psplit(solutions, num_local_devices),
                 masks,
                 num_solved_puzzles,
                 num_correct_vals,
                 pcnt_correct_vals,
-                masked_entropies,
-                unmasked_entropies
+                batch_pathwise_loss
             )
-        #val_time = time.time() - val_start
+        keys = list(batch_pathwise_loss[0].keys())
         num_vals = jnp.array(num_correct_vals).sum()
         val_accuracy = jnp.array(pcnt_correct_vals).mean()
         num_puzzles = jnp.array(num_solved_puzzles).sum()
-        masked_entropy = jnp.array(masked_entropies).mean()
-        unmasked_entropy = jnp.array(unmasked_entropies).mean()
-        return {
+        path_losses = {k : jnp.concatenate(getter(k, batch_pathwise_loss)) for k in keys}
+        val_dict = {
             'validation/num_correct_values': num_vals,
             'validation/num_solved_puzzles': num_puzzles,
-            'validation/value_accuracy': val_accuracy,
-            'validation/masked_val_entropy': masked_entropy,
-            'validation/unmasked_val_entropy': unmasked_entropy
+            'validation/value_accuracy': val_accuracy
         }
+        return val_dict.update(path_losses)
     return val_fn
 
 

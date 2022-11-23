@@ -50,7 +50,7 @@ class HypersphereBackwardsSolver(to.Tree):
             drift_term = self.step_size * jax.vmap(self.manifold.log)(pred, base_point)
             point = jax.vmap(self.manifold.exp)(drift_term, base_point)
             point = jnp.abs(point)
-            return point, point
+            return point, (base_point, logits)
         times = jnp.linspace(self.t_final, 0., self.num_steps)
         keys = jax.random.split(rng, self.num_steps)
         x0, path = jax.lax.scan(_step, x_final, (keys, times))
