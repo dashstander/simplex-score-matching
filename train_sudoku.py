@@ -118,10 +118,13 @@ def entropy(x, axis=-1):
 def pathwise_loss(logits, solutions):
     # logits_shape = (batch_size, num_steps, 81, 9)
     # solutions_shape = (batch_size, 81, 9)
-    jax.debug.print(f'Logit shape: {logits.shape}')
-    jax.debug.print(f'solutions shape: {solutions.shape}')
-    cross_ent = jax.vmap(optax.softmax_cross_entropy, in_axes=(1, None))
-    loss = cross_ent(logits, solutions)
+    #jax.debug.print(f'Logit shape: {logits.shape}')
+    #jax.debug.print(f'solutions shape: {solutions.shape}')
+    #cross_ent = jax.vmap(optax.softmax_cross_entropy, in_axes=(1, None))
+    loss = jax.lax.map(
+        lambda x: optax.softmax_cross_entropy(x, solutions),
+        jnp.swapaxes(logits, 0, 1)
+    )
     loss_by_times = jax.tree_util.tree_map(
         # average over the time and sequence (puzzle) dimensions
         lambda x: jnp.mean(x, axis=(0, 2)),
