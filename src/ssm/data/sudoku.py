@@ -112,7 +112,7 @@ def make_val_loader(config, rng_key):
     key, subkey = jax.random.split(rng_key)
     data_config = config['data']
     batch_size = data_config['batch_size']
-    assert batch_size % 32 == 0
+    assert batch_size % 16 == 0
     #val_batch_size = batch_size // 32
     num_validation = data_config['num_val_batches'] * batch_size
     data_fp = data_config['data_path']
@@ -120,7 +120,7 @@ def make_val_loader(config, rng_key):
     data_size = data['puzzles'].shape[0]
     train_size = data_size - num_validation
     indices = np.arange(train_size, data_size)
-    splits = data_config['num_val_batches'] * 32
+    splits = data_config['num_val_batches'] * 16
     for batch_indices in jnp.array_split(indices, splits):
         if len(batch_indices) != batch_size:
             #print(f'Batch has size {len(batch_indices)} not {batch_size}')
